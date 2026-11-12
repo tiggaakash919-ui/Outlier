@@ -83,14 +83,64 @@ object OutlierCalculator {
 
   /**
    * Applies the targeted one-tap filter adjustment for the detected empty stage.
+   * If the user already applied the standard fix and still got 0 results, progressively relaxes further
+   * so the button never gets stuck in a no-op loop.
    */
   fun applyEmptyStageFix(filters: FilterOptions, stage: EmptyStageReason): FilterOptions {
     val base = filters.withTrimmedKeyword()
     return when (stage) {
-      EmptyStageReason.DURATION_OR_MIN_VIEWS -> base.copy(minViralViews = 100_000L)
-      EmptyStageReason.SUBS_FILTER -> base.copy(minSubs = 0L, maxSubs = 100_000L, recency = "7d")
-      EmptyStageReason.MEDIAN_STAGE -> base.copy(maxMedianViews = 20_000L)
-      EmptyStageReason.MULTIPLIER_STAGE -> base.copy(minMultiplier = 20)
+      EmptyStageReason.DURATION_OR_MIN_VIEWS -> {
+        if (base.minViralViews > 100_000L) {
+          base.copy(minViralViews = 100_000L)
+        } else {
+          base.copy(
+            minViralViews = 25_000L,
+            maxDurationSeconds = 180L,
+            regionCode = "Any",
+            recency = "30d"
+          )
+        }
+      }
+      EmptyStageReason.SUBS_FILTER -> {
+        if (base.maxSubs < 100_000L || base.recency != "7d") {
+          base.copy(minSubs = 0L, maxSubs = 100_000L, recency = "7d")
+        } else {
+          base.copy(
+            minSubs = 0L,
+            maxSubs = 500_000L,
+            recency = "30d",
+            regionCode = "Any",
+            maxMedianViews = maxOf(base.maxMedianViews, 20_000L),
+            minMultiplier = minOf(base.minMultiplier, 20)
+          )
+        }
+      }
+      EmptyStageReason.MEDIAN_STAGE -> {
+        if (base.maxMedianViews < 20_000L) {
+          base.copy(maxMedianViews = 20_000L)
+        } else {
+          base.copy(
+            maxMedianViews = 100_000L,
+            maxSubs = maxOf(base.maxSubs, 250_000L),
+            minViralViews = minOf(base.minViralViews, 100_000L),
+            minMultiplier = minOf(base.minMultiplier, 15),
+            recency = "30d",
+            regionCode = "Any"
+          )
+        }
+      }
+      EmptyStageReason.MULTIPLIER_STAGE -> {
+        if (base.minMultiplier > 20) {
+          base.copy(minMultiplier = 20)
+        } else {
+          base.copy(
+            minMultiplier = 5,
+            maxMedianViews = maxOf(base.maxMedianViews, 50_000L),
+            maxSubs = maxOf(base.maxSubs, 250_000L),
+            regionCode = "Any"
+          )
+        }
+      }
     }
   }
 

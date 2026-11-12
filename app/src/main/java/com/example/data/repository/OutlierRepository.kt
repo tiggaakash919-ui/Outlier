@@ -642,9 +642,12 @@ class OutlierRepository(
     onUnitsUsed(1)
 
     var items = playlistResponse.body()?.items ?: emptyList()
+    var videoIdsToFetch = items.mapNotNull { it.contentDetails?.videoId }
+      .filter { !viralVideoIds.contains(it) }
+      .take(sampleSize)
 
-    if (!playlistResponse.isSuccessful || items.isEmpty()) {
-      // Fallback to uploads playlist
+    if (!playlistResponse.isSuccessful || videoIdsToFetch.size < 5) {
+      // Fallback to uploads playlist when UUSH fails or has fewer than 5 other videos
       isUush = false
       val fallbackUploadsId = uploadsPlaylistId
         ?: (if (channelId.startsWith("UC")) "UU" + channelId.drop(2) else null)
@@ -663,12 +666,11 @@ class OutlierRepository(
 
       items = playlistResponse.body()?.items ?: emptyList()
       if (!playlistResponse.isSuccessful || items.isEmpty()) return null
-    }
 
-    // Extract video IDs excluding viral video(s)
-    val videoIdsToFetch = items.mapNotNull { it.contentDetails?.videoId }
-      .filter { !viralVideoIds.contains(it) }
-      .take(sampleSize)
+      videoIdsToFetch = items.mapNotNull { it.contentDetails?.videoId }
+        .filter { !viralVideoIds.contains(it) }
+        .take(sampleSize)
+    }
 
     if (videoIdsToFetch.size < 5) return null
 

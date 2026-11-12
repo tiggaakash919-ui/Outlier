@@ -230,12 +230,44 @@ class MainViewModel(
   }
 
   fun loosenFilters() {
-    _filters.value = Presets.applyPreset(PresetType.LOOSE, _filters.value.keyword)
+    val cur = _filters.value
+    val loose = Presets.applyPreset(PresetType.LOOSE, cur.keyword)
+    val isAlreadyLoose = cur.maxSubs >= loose.maxSubs &&
+      cur.maxMedianViews >= loose.maxMedianViews &&
+      cur.minViralViews <= loose.minViralViews &&
+      cur.minMultiplier <= loose.minMultiplier &&
+      cur.regionCode.equals("Any", ignoreCase = true)
+
+    _filters.value = if (isAlreadyLoose && _outliers.value.isEmpty()) {
+      // Progressive relaxation when Loose preset still yields 0 outliers on broad niches like Gaming/Minecraft
+      loose.copy(
+        maxSubs = 500_000L,
+        maxMedianViews = 100_000L,
+        minViralViews = 50_000L,
+        minMultiplier = 5,
+        recency = "7d"
+      )
+    } else {
+      loose
+    }
     startSearch(forceRefresh = false)
   }
 
   fun applyEmptyStageFix(stage: EmptyStageReason) {
-    _filters.value = OutlierCalculator.applyEmptyStageFix(_filters.value, stage)
+    val stats = _debugStats.value
+    var updated = OutlierCalculator.applyEmptyStageFix(_filters.value, stage)
+    // If median stage failed and almost all channels were already filtered out by subs (or had <5 shorts),
+    // also widen subscriber range & region so the retry checks more channels instead of getting stuck.
+    if (stage == EmptyStageReason.MEDIAN_STAGE && (stats.afterSubsFilter <= 3 || stats.channelsMedianTooHigh == 0)) {
+      updated = updated.copy(
+        maxSubs = maxOf(updated.maxSubs, 100_000L),
+        minViralViews = minOf(updated.minViralViews, 100_000L),
+        minMultiplier = minOf(updated.minMultiplier, 20),
+        recency = "30d",
+        regionCode = "Any"
+      )
+    }
+    _filters.value = updated
     startSearch(forceRefresh = false)
   }
 

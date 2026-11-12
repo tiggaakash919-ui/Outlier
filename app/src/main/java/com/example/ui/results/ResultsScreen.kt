@@ -184,103 +184,106 @@ fun ResultsScreen(
           modifier = Modifier.testTag("results_header_title")
         )
 
-        Spacer(modifier = Modifier.height(8.dp))
+        // Only show Sort Selector & Disclaimer when there are results to sort
+        if (displayList.isNotEmpty() || outliers.isNotEmpty()) {
+          Spacer(modifier = Modifier.height(8.dp))
 
-        // Sort Selector
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          verticalAlignment = Alignment.CenterVertically
-        ) {
-          Icon(
-            imageVector = Icons.Default.FilterList,
-            contentDescription = null,
-            tint = PrimaryViolet,
-            modifier = Modifier.size(16.dp)
-          )
-          Spacer(modifier = Modifier.width(6.dp))
-          Text(
-            text = "Sort:",
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-          )
-        }
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        FlowRow(
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
-          verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-          SortOption.entries.forEach { option ->
-            FilterChip(
-              selected = selectedSort == option,
-              onClick = { selectedSort = option },
-              label = { Text(option.label, fontSize = 11.sp) }
+          // Sort Selector
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Icon(
+              imageVector = Icons.Default.FilterList,
+              contentDescription = null,
+              tint = PrimaryViolet,
+              modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+              text = "Sort:",
+              fontSize = 12.sp,
+              color = MaterialTheme.colorScheme.onSurfaceVariant
             )
           }
-        }
 
-        Spacer(modifier = Modifier.height(6.dp))
+          Spacer(modifier = Modifier.height(6.dp))
 
-        // Toggle: "Show non-Shorts"
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
-          verticalAlignment = Alignment.CenterVertically
-        ) {
-          Text(
-            text = appStrings.showNonShorts,
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-          )
-          Switch(
-            checked = showNonShorts,
-            onCheckedChange = { showNonShorts = it },
-            colors = SwitchDefaults.colors(
-              checkedThumbColor = PrimaryViolet,
-              checkedTrackColor = PrimaryViolet.copy(alpha = 0.5f)
-            ),
-            modifier = Modifier.testTag("toggle_show_non_shorts")
-          )
-        }
-
-        // Dismissible Disclaimer
-        AnimatedVisibility(visible = showDisclaimer) {
-          Card(
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)),
-            modifier = Modifier
-              .fillMaxWidth()
-              .padding(vertical = 6.dp)
+          FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
           ) {
-            Row(
-              modifier = Modifier.padding(10.dp),
-              verticalAlignment = Alignment.Top
+            SortOption.entries.forEach { option ->
+              FilterChip(
+                selected = selectedSort == option,
+                onClick = { selectedSort = option },
+                label = { Text(option.label, fontSize = 11.sp) }
+              )
+            }
+          }
+
+          Spacer(modifier = Modifier.height(6.dp))
+
+          // Toggle: "Show non-Shorts"
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Text(
+              text = appStrings.showNonShorts,
+              fontSize = 12.sp,
+              color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Switch(
+              checked = showNonShorts,
+              onCheckedChange = { showNonShorts = it },
+              colors = SwitchDefaults.colors(
+                checkedThumbColor = PrimaryViolet,
+                checkedTrackColor = PrimaryViolet.copy(alpha = 0.5f)
+              ),
+              modifier = Modifier.testTag("toggle_show_non_shorts")
+            )
+          }
+
+          // Dismissible Disclaimer
+          AnimatedVisibility(visible = showDisclaimer) {
+            Card(
+              shape = RoundedCornerShape(12.dp),
+              colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)),
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 6.dp)
             ) {
-              Icon(
-                imageVector = Icons.Default.Info,
-                contentDescription = null,
-                tint = SecondaryCyan,
-                modifier = Modifier.size(18.dp).padding(top = 2.dp)
-              )
-              Spacer(modifier = Modifier.width(8.dp))
-              Text(
-                text = appStrings.resultsDisclaimer,
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                lineHeight = 16.sp,
-                modifier = Modifier.weight(1f)
-              )
-              IconButton(
-                onClick = { showDisclaimer = false },
-                modifier = Modifier.size(20.dp)
+              Row(
+                modifier = Modifier.padding(10.dp),
+                verticalAlignment = Alignment.Top
               ) {
                 Icon(
-                  imageVector = Icons.Default.Close,
-                  contentDescription = "Dismiss",
-                  tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                  modifier = Modifier.size(14.dp)
+                  imageVector = Icons.Default.Info,
+                  contentDescription = null,
+                  tint = SecondaryCyan,
+                  modifier = Modifier.size(18.dp).padding(top = 2.dp)
                 )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                  text = appStrings.resultsDisclaimer,
+                  fontSize = 12.sp,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  lineHeight = 16.sp,
+                  modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                  onClick = { showDisclaimer = false },
+                  modifier = Modifier.size(20.dp)
+                ) {
+                  Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Dismiss",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(14.dp)
+                  )
+                }
               }
             }
           }
@@ -324,75 +327,98 @@ fun ResultsScreen(
       // Smart Empty state (Requirement 4)
       if (!isLoading && displayList.isEmpty()) {
         val detectedStage = OutlierCalculator.detectEmptyStage(debugStats)
+        val detailMessage = if (
+          detectedStage == EmptyStageReason.MEDIAN_STAGE &&
+          debugStats.channelsMedianTooHigh == 0 &&
+          debugStats.channelsWithTooFewShorts > 0
+        ) {
+          "Chhote channels mile par unpar <5 Shorts the (${debugStats.channelsWithTooFewShorts} channels skipped)"
+        } else {
+          detectedStage.message
+        }
         item {
           Card(
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
+            modifier = Modifier.fillMaxWidth()
           ) {
             Column(
-              modifier = Modifier.padding(22.dp).fillMaxWidth(),
+              modifier = Modifier.padding(16.dp).fillMaxWidth(),
               horizontalAlignment = Alignment.CenterHorizontally
             ) {
-              Icon(
-                imageVector = Icons.Default.SearchOff,
-                contentDescription = null,
-                tint = AccentRed,
-                modifier = Modifier.size(44.dp)
-              )
-              Spacer(modifier = Modifier.height(10.dp))
-              Text(
-                text = detectedStage.message,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.testTag("empty_state_stage_message")
-              )
-              Spacer(modifier = Modifier.height(6.dp))
-              Text(
-                text = appStrings.resultsEmptySubtitle,
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-              )
-              Spacer(modifier = Modifier.height(16.dp))
-
-              // Targeted one-tap fix button
-              Button(
-                onClick = { onApplyEmptyStageFix(detectedStage) },
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
-                modifier = Modifier
-                  .fillMaxWidth()
-                  .testTag("empty_stage_fix_button")
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
               ) {
                 Icon(
-                  imageVector = Icons.Default.AutoFixHigh,
+                  imageVector = Icons.Default.SearchOff,
                   contentDescription = null,
-                  modifier = Modifier.size(16.dp),
-                  tint = Color.White
+                  tint = AccentRed,
+                  modifier = Modifier.size(28.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                  text = detectedStage.fixButtonLabel,
-                  fontSize = 14.sp,
-                  fontWeight = FontWeight.SemiBold,
-                  color = Color.White
+                  text = detailMessage,
+                  fontSize = 15.sp,
+                  fontWeight = FontWeight.Bold,
+                  color = MaterialTheme.colorScheme.onSurface,
+                  textAlign = TextAlign.Center,
+                  modifier = Modifier.testTag("empty_state_stage_message")
                 )
               }
+              Spacer(modifier = Modifier.height(6.dp))
+              Text(
+                text = appStrings.resultsEmptySubtitle,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+              )
+              Spacer(modifier = Modifier.height(12.dp))
 
-              Spacer(modifier = Modifier.height(10.dp))
-
-              // Existing "Loosen filters" button
-              OutlinedButton(
-                onClick = onLoosenFilters,
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                  .fillMaxWidth()
-                  .testTag("loosen_filters_button")
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
               ) {
-                Text(appStrings.loosenFiltersBtn, fontSize = 14.sp, color = PrimaryViolet)
+                // Targeted one-tap fix button
+                Button(
+                  onClick = { onApplyEmptyStageFix(detectedStage) },
+                  shape = RoundedCornerShape(14.dp),
+                  colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
+                  modifier = Modifier
+                    .weight(1f)
+                    .testTag("empty_stage_fix_button")
+                ) {
+                  Icon(
+                    imageVector = Icons.Default.AutoFixHigh,
+                    contentDescription = null,
+                    modifier = Modifier.size(15.dp),
+                    tint = Color.White
+                  )
+                  Spacer(modifier = Modifier.width(6.dp))
+                  Text(
+                    text = detectedStage.fixButtonLabel,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                    maxLines = 1
+                  )
+                }
+
+                // Existing "Loosen filters" button
+                OutlinedButton(
+                  onClick = onLoosenFilters,
+                  shape = RoundedCornerShape(14.dp),
+                  modifier = Modifier
+                    .weight(1f)
+                    .testTag("loosen_filters_button")
+                ) {
+                  Text(
+                    text = appStrings.loosenFiltersBtn,
+                    fontSize = 12.sp,
+                    color = PrimaryViolet,
+                    maxLines = 1
+                  )
+                }
               }
             }
           }
