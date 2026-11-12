@@ -220,13 +220,50 @@ fun HomeScreen(
       nicheSuggestions.forEach { niche ->
         FilterChip(
           selected = filters.keyword.equals(niche, ignoreCase = true),
-          onClick = { onFiltersChange(filters.copy(keyword = niche)) },
+          onClick = {
+            searchInput = niche
+            onFiltersChange(filters.copy(keyword = niche))
+          },
           label = { Text(niche, fontSize = 12.sp) },
           colors = FilterChipDefaults.filterChipColors(
             selectedContainerColor = PrimaryViolet.copy(alpha = 0.25f),
             selectedLabelColor = MaterialTheme.colorScheme.onSurface
           ),
           modifier = Modifier.testTag("chip_niche_$niche")
+        )
+      }
+    }
+
+    Spacer(modifier = Modifier.height(10.dp))
+
+    // High-Outlier Micro-Niches (Sub-topic suggestions that find small-channel gems easily)
+    val microNiches = remember(filters.keyword) {
+      OutlierCalculator.getMicroNichesFor(filters.keyword)
+    }
+    Text(
+      text = "🔥 Viral Micro-Niche Ideas (Small-Channel Gems):",
+      fontSize = 12.sp,
+      fontWeight = FontWeight.SemiBold,
+      color = SecondaryCyan
+    )
+    Spacer(modifier = Modifier.height(6.dp))
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .horizontalScroll(rememberScrollState()),
+      horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+      microNiches.forEach { subNiche ->
+        SuggestionChip(
+          onClick = {
+            searchInput = subNiche
+            val looseWithSubNiche = Presets.applyPreset(PresetType.LOOSE, subNiche)
+            onFiltersChange(looseWithSubNiche)
+            if (!isQuotaBlocked && !isSearching) {
+              onSearchClick()
+            }
+          },
+          label = { Text("✨ $subNiche", fontSize = 11.sp) }
         )
       }
     }

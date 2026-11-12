@@ -219,8 +219,40 @@ fun SavedScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Search within saved items
+        // Search within saved items & Summary Insights Bar
         if (savedList.isNotEmpty()) {
+          val avgMultiplier = savedList.map { it.outlierMultiplier }.average().toInt()
+          val maxViews = savedList.maxOfOrNull { it.views } ?: 0L
+          val minSubs = savedList.minOfOrNull { it.subscriberCount } ?: 0L
+
+          Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp, horizontal = 12.dp),
+              horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+              Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("${avgMultiplier}x", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = PrimaryViolet)
+                Text("Avg Multiplier", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+              }
+              Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(com.example.domain.OutlierCalculator.formatCompactNumber(maxViews), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = SecondaryCyan)
+                Text("Peak Views", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+              }
+              Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("~${com.example.domain.OutlierCalculator.formatCompactNumber(minSubs)}", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = AccentRed)
+                Text("Smallest Subs", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+              }
+            }
+          }
+
+          Spacer(modifier = Modifier.height(10.dp))
+
           OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },

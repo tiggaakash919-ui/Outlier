@@ -173,14 +173,31 @@ fun OutlierCard(
               Box(
                 modifier = Modifier
                   .clip(RoundedCornerShape(8.dp))
-                .background(SecondaryCyan.copy(alpha = 0.15f))
-                .padding(horizontal = 6.dp, vertical = 3.dp)
+                  .background(SecondaryCyan.copy(alpha = 0.15f))
+                  .padding(horizontal = 6.dp, vertical = 3.dp)
               ) {
                 Text(
                   text = String.format(Locale.US, "%.1fx subs", video.viewsPerSub),
                   color = SecondaryCyan,
                   fontSize = 11.sp,
                   fontWeight = FontWeight.Medium
+                )
+              }
+            }
+
+            val velocity = OutlierCalculator.calculateViewsPerDay(video.views, video.publishedAt)
+            if (velocity != null) {
+              Box(
+                modifier = Modifier
+                  .clip(RoundedCornerShape(8.dp))
+                  .background(PrimaryViolet.copy(alpha = 0.16f))
+                  .padding(horizontal = 6.dp, vertical = 3.dp)
+              ) {
+                Text(
+                  text = "⚡ $velocity",
+                  color = PrimaryViolet,
+                  fontSize = 10.sp,
+                  fontWeight = FontWeight.SemiBold
                 )
               }
             }
@@ -298,8 +315,9 @@ fun OutlierCard(
           }
         }
 
-        // Likes & Comments
+        // Likes & Engagement Rate
         if (video.likes > 0) {
+          val engRate = OutlierCalculator.calculateEngagementRate(video.views, video.likes)
           Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(vertical = 6.dp)
@@ -312,7 +330,11 @@ fun OutlierCard(
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(
-              text = OutlierCalculator.formatCompactNumber(video.likes),
+              text = if (engRate != null) {
+                "${OutlierCalculator.formatCompactNumber(video.likes)} ($engRate)"
+              } else {
+                OutlierCalculator.formatCompactNumber(video.likes)
+              },
               fontSize = 11.sp,
               color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -416,6 +438,13 @@ fun OutlierCard(
                 onClick = {
                   showCopyMenu = false
                   onCopyClick("Description", video.description)
+                }
+              )
+              DropdownMenuItem(
+                text = { Text("Copy Channel URL") },
+                onClick = {
+                  showCopyMenu = false
+                  onCopyClick("Channel URL", "https://www.youtube.com/channel/${video.channelId}/shorts")
                 }
               )
             }

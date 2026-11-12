@@ -4,7 +4,10 @@ import androidx.compose.ui.graphics.Color
 import com.example.ui.theme.BadgeGray
 import com.example.ui.theme.BadgeGreen
 import com.example.ui.theme.BadgeYellow
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.Locale
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 enum class BadgeTier {
@@ -24,6 +27,90 @@ object OutlierCalculator {
   fun calculateViewsPerSub(viralViews: Long, subscriberCount: Long): Double {
     if (subscriberCount <= 0) return 0.0
     return viralViews.toDouble() / subscriberCount.toDouble()
+  }
+
+  fun calculateEngagementRate(views: Long, likes: Long): String? {
+    if (views <= 0 || likes <= 0) return null
+    val pct = (likes.toDouble() / views.toDouble()) * 100.0
+    if (pct < 0.1 || pct > 100.0) return null
+    return String.format(Locale.US, "%.1f%% likes", pct)
+  }
+
+  fun calculateViewsPerDay(views: Long, publishedAt: String): String? {
+    if (views <= 0 || publishedAt.isBlank()) return null
+    return try {
+      val publishedInstant = Instant.parse(publishedAt)
+      val days = max(1L, ChronoUnit.DAYS.between(publishedInstant, Instant.now()))
+      val perDay = views / days
+      if (perDay <= 0L) null else "${formatCompactNumber(perDay)}/day"
+    } catch (_: Exception) {
+      null
+    }
+  }
+
+  fun getMicroNichesFor(keyword: String): List<String> {
+    val norm = keyword.trim().lowercase(Locale.ROOT)
+    return when {
+      norm.contains("minecraft") -> listOf(
+        "minecraft but challenge",
+        "minecraft hindi shorts",
+        "minecraft survival tips",
+        "minecraft build hacks",
+        "minecraft redstone facts",
+        "minecraft speedrun moment"
+      )
+      norm.contains("gaming") || norm.contains("game") -> listOf(
+        "minecraft hindi shorts",
+        "bgmi clutch shorts",
+        "gta 5 funny hindi",
+        "free fire tips",
+        "roblox story shorts",
+        "indie game devlog"
+      )
+      norm.contains("tech") -> listOf(
+        "android secret tricks",
+        "useful websites shorts",
+        "ai tools hindi",
+        "pc tips and tricks",
+        "budget gadgets india"
+      )
+      norm.contains("finance") || norm.contains("crypto") -> listOf(
+        "stock market mistake",
+        "passive income hindi",
+        "credit card hacks",
+        "business case study",
+        "money psychology"
+      )
+      norm.contains("fact") -> listOf(
+        "amazing facts hindi",
+        "space mystery shorts",
+        "psychology facts hindi",
+        "history untaught facts",
+        "science experiment short"
+      )
+      norm.contains("motiv") -> listOf(
+        "study motivation hindi",
+        "success mindset short",
+        "discipline habits",
+        "life lessons hindi",
+        "gym motivation short"
+      )
+      norm.contains("cook") || norm.contains("food") -> listOf(
+        "street food recipe",
+        "5 minute hostel recipe",
+        "healthy protein snack",
+        "desi tiffin ideas",
+        "instant breakfast hindi"
+      )
+      else -> listOf(
+        "minecraft hindi shorts",
+        "psychology facts hindi",
+        "android secret tricks",
+        "5 minute recipe",
+        "business case study",
+        "space mystery shorts"
+      )
+    }
   }
 
   fun getBadgeTier(multiplier: Int): BadgeTier {

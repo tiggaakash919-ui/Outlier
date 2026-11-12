@@ -23,6 +23,8 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
+import android.content.Intent
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -299,32 +301,49 @@ fun AiBottomSheet(
 
           Spacer(modifier = Modifier.height(16.dp))
 
-          // Copy All & Close Row
+          // Copy All, Share & Close Row
+          val fullReport = buildString {
+            appendLine("Outlier Breakdown: ${video.title}")
+            appendLine("Channel: ${video.channelTitle} (${video.outlierMultiplier}x Outlier)")
+            appendLine("\nWhy Viral:")
+            analysis.whyViral.forEach { appendLine("- $it") }
+            appendLine("\nHook Ideas:")
+            analysis.hookIdeas.forEach { appendLine("- $it") }
+            appendLine("\nTitle Ideas:")
+            analysis.titleIdeas.forEach { appendLine("- $it") }
+            appendLine("\nContent Idea & Outline:")
+            appendLine(analysis.contentIdea)
+          }
+
           Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
           ) {
             OutlinedButton(
+              onClick = { copyText("Full AI Breakdown", fullReport) },
+              shape = RoundedCornerShape(12.dp),
+              modifier = Modifier.weight(1f)
+            ) {
+              Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(15.dp))
+              Spacer(modifier = Modifier.width(4.dp))
+              Text("Copy All", fontSize = 12.sp)
+            }
+
+            OutlinedButton(
               onClick = {
-                val fullReport = buildString {
-                  appendLine("Outlier Breakdown: ${video.title}")
-                  appendLine("\nWhy Viral:")
-                  analysis.whyViral.forEach { appendLine("- $it") }
-                  appendLine("\nHook Ideas:")
-                  analysis.hookIdeas.forEach { appendLine("- $it") }
-                  appendLine("\nTitle Ideas:")
-                  analysis.titleIdeas.forEach { appendLine("- $it") }
-                  appendLine("\nContent Idea & Outline:")
-                  appendLine(analysis.contentIdea)
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                  type = "text/plain"
+                  putExtra(Intent.EXTRA_SUBJECT, "Outlier Breakdown: ${video.title}")
+                  putExtra(Intent.EXTRA_TEXT, fullReport)
                 }
-                copyText("Full AI Breakdown", fullReport)
+                context.startActivity(Intent.createChooser(shareIntent, "Share AI Breakdown"))
               },
               shape = RoundedCornerShape(12.dp),
               modifier = Modifier.weight(1f)
             ) {
-              Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-              Spacer(modifier = Modifier.width(6.dp))
-              Text("Copy All")
+              Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(15.dp))
+              Spacer(modifier = Modifier.width(4.dp))
+              Text("Share", fontSize = 12.sp)
             }
 
             Button(
@@ -333,7 +352,7 @@ fun AiBottomSheet(
               colors = ButtonDefaults.buttonColors(containerColor = PrimaryViolet),
               modifier = Modifier.weight(1f)
             ) {
-              Text("Done", color = Color.White)
+              Text("Done", color = Color.White, fontSize = 12.sp)
             }
           }
         }

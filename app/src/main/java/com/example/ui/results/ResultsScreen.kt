@@ -81,6 +81,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.BookmarkBorder
 import com.example.domain.DebugStats
 import com.example.domain.EmptyStageReason
 import com.example.domain.NearMissVideo
@@ -446,7 +450,53 @@ fun ResultsScreen(
           NearMissesSection(
             nearMisses = nearMisses.take(10),
             defaultExpanded = displayList.isEmpty(),
-            onOpenShort = { openShort(it) }
+            onOpenShort = { openShort(it) },
+            onSaveNearMiss = { item ->
+              val asOutlier = OutlierVideo(
+                videoId = item.videoId,
+                title = item.title,
+                description = "",
+                tags = emptyList(),
+                thumbnailUrl = item.thumbnailUrl,
+                channelId = item.channelId,
+                channelTitle = item.channelTitle,
+                subscriberCount = item.subscriberCount,
+                hiddenSubscriberCount = item.hiddenSubscriberCount,
+                views = item.views,
+                channelMedianViews = item.medianViews ?: 1_000L,
+                outlierMultiplier = item.multiplier ?: OutlierCalculator.calculateMultiplier(item.views, maxOf(1L, item.subscriberCount)),
+                viewsPerSub = OutlierCalculator.calculateViewsPerSub(item.views, item.subscriberCount),
+                likes = 0L,
+                comments = 0L,
+                durationSeconds = 60L,
+                publishedAt = "",
+                shortStatus = ShortStatus.UNVERIFIED
+              )
+              onSaveToggle(asOutlier)
+            },
+            onAiNearMiss = { item ->
+              val asOutlier = OutlierVideo(
+                videoId = item.videoId,
+                title = item.title,
+                description = "",
+                tags = emptyList(),
+                thumbnailUrl = item.thumbnailUrl,
+                channelId = item.channelId,
+                channelTitle = item.channelTitle,
+                subscriberCount = item.subscriberCount,
+                hiddenSubscriberCount = item.hiddenSubscriberCount,
+                views = item.views,
+                channelMedianViews = item.medianViews ?: 1_000L,
+                outlierMultiplier = item.multiplier ?: OutlierCalculator.calculateMultiplier(item.views, maxOf(1L, item.subscriberCount)),
+                viewsPerSub = OutlierCalculator.calculateViewsPerSub(item.views, item.subscriberCount),
+                likes = 0L,
+                comments = 0L,
+                durationSeconds = 60L,
+                publishedAt = "",
+                shortStatus = ShortStatus.UNVERIFIED
+              )
+              onAiClick(asOutlier)
+            }
           )
         }
       }
@@ -563,7 +613,9 @@ fun ResultsScreen(
 private fun NearMissesSection(
   nearMisses: List<NearMissVideo>,
   defaultExpanded: Boolean,
-  onOpenShort: (String) -> Unit
+  onOpenShort: (String) -> Unit,
+  onSaveNearMiss: (NearMissVideo) -> Unit,
+  onAiNearMiss: (NearMissVideo) -> Unit
 ) {
   var isExpanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
 
@@ -617,6 +669,19 @@ private fun NearMissesSection(
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+              if (item.thumbnailUrl.isNotBlank()) {
+                AsyncImage(
+                  model = item.thumbnailUrl,
+                  contentDescription = null,
+                  contentScale = ContentScale.Crop,
+                  modifier = Modifier
+                    .width(56.dp)
+                    .height(82.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                )
+              }
+
               Column(modifier = Modifier.weight(1f)) {
                 Text(
                   text = item.title,
@@ -633,28 +698,70 @@ private fun NearMissesSection(
                   color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(6.dp))
-                // Red reason chip
-                Box(
-                  modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(AccentRed.copy(alpha = 0.18f))
-                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                Row(
+                  horizontalArrangement = Arrangement.spacedBy(6.dp),
+                  verticalAlignment = Alignment.CenterVertically
                 ) {
-                  Text(
-                    text = item.reasonChip,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = AccentRed
-                  )
+                  // Red reason chip
+                  Box(
+                    modifier = Modifier
+                      .clip(RoundedCornerShape(6.dp))
+                      .background(AccentRed.copy(alpha = 0.18f))
+                      .padding(horizontal = 8.dp, vertical = 3.dp)
+                  ) {
+                    Text(
+                      text = item.reasonChip,
+                      fontSize = 11.sp,
+                      fontWeight = FontWeight.SemiBold,
+                      color = AccentRed
+                    )
+                  }
+
+                  if (item.multiplier != null && item.multiplier > 0) {
+                    Box(
+                      modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(BadgeYellow.copy(alpha = 0.16f))
+                        .padding(horizontal = 6.dp, vertical = 3.dp)
+                    ) {
+                      Text(
+                        text = "${item.multiplier}x",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BadgeYellow
+                      )
+                    }
+                  }
                 }
               }
 
-              Icon(
-                imageVector = Icons.Default.PlayArrow,
-                contentDescription = "Open Short",
-                tint = SecondaryCyan,
-                modifier = Modifier.size(20.dp)
-              )
+              Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+              ) {
+                IconButton(
+                  onClick = { onAiNearMiss(item) },
+                  modifier = Modifier.size(34.dp)
+                ) {
+                  Icon(
+                    imageVector = Icons.Default.AutoAwesome,
+                    contentDescription = "AI Breakdown",
+                    tint = PrimaryViolet,
+                    modifier = Modifier.size(18.dp)
+                  )
+                }
+                IconButton(
+                  onClick = { onSaveNearMiss(item) },
+                  modifier = Modifier.size(34.dp)
+                ) {
+                  Icon(
+                    imageVector = Icons.Default.BookmarkBorder,
+                    contentDescription = "Save Near Miss",
+                    tint = SecondaryCyan,
+                    modifier = Modifier.size(18.dp)
+                  )
+                }
+              }
             }
           }
         }
