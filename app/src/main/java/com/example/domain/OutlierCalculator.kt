@@ -14,6 +14,8 @@ enum class BadgeTier {
 }
 
 object OutlierCalculator {
+  fun trimKeyword(raw: String): String = raw.trim()
+
   fun calculateMultiplier(viralViews: Long, medianViews: Long): Int {
     if (medianViews <= 0) return 0
     return (viralViews.toDouble() / medianViews.toDouble()).roundToInt()
@@ -61,5 +63,73 @@ object OutlierCalculator {
   fun formatSubscribers(subs: Long, hidden: Boolean): String {
     if (hidden) return "Hidden subs"
     return "~${formatCompactNumber(subs)}"
+  }
+
+  /**
+   * Finds the first pipeline stage where the count dropped to 0.
+   * - after duration/minViews = 0 -> DURATION_OR_MIN_VIEWS ("Itne views wale Shorts nahi mile")
+   * - after subs filter = 0 -> SUBS_FILTER ("Sab channels bade hain (subs zyada)")
+   * - median stage = 0 -> MEDIAN_STAGE ("Channels ke baaki Shorts bhi zyada views le rahe hain")
+   * - multiplier stage = 0 -> MULTIPLIER_STAGE ("Multiplier kam hai")
+   */
+  fun detectEmptyStage(stats: DebugStats): EmptyStageReason {
+    return when {
+      stats.afterDurationFilter == 0 || stats.afterMinViewsFilter == 0 -> EmptyStageReason.DURATION_OR_MIN_VIEWS
+      stats.afterSubsFilter == 0 -> EmptyStageReason.SUBS_FILTER
+      stats.channelsPassingMedian == 0 -> EmptyStageReason.MEDIAN_STAGE
+      else -> EmptyStageReason.MULTIPLIER_STAGE
+    }
+  }
+
+  /**
+   * Applies the targeted one-tap filter adjustment for the detected empty stage.
+   */
+  fun applyEmptyStageFix(filters: FilterOptions, stage: EmptyStageReason): FilterOptions {
+    val base = filters.withTrimmedKeyword()
+    return when (stage) {
+      EmptyStageReason.DURATION_OR_MIN_VIEWS -> base.copy(minViralViews = 100_000L)
+      EmptyStageReason.SUBS_FILTER -> base.copy(minSubs = 0L, maxSubs = 100_000L, recency = "7d")
+      EmptyStageReason.MEDIAN_STAGE -> base.copy(maxMedianViews = 20_000L)
+      EmptyStageReason.MULTIPLIER_STAGE -> base.copy(minMultiplier = 20)
+    }
+  }
+
+  /**
+   * Generates the exact near-miss reason chip text for a rejected candidate:
+   * - "Subs 250K > max 10K"
+   * - "<5 Shorts on channel"
+   * - "Median 12K > max 5K"
+   * - "Multiplier 8x < 50x"
+   * Returns null if the candidate passes all filters.
+   */
+  fun buildNearMissReason(
+    subscriberCount: Long,
+    hiddenSubscribers: Boolean = false,
+    shortCount: Int?,
+    medianViews: Long?,
+    multiplier: Int?,
+    filters: FilterOptions
+  ): String? {
+    val isFullRangeSubs = filters.minSubs <= 0L && filters.maxSubs >= 100_000L
+    if (hiddenSubscribers && !isFullRangeSubs) {
+      return "Hidden subs"
+    }
+    if (subscriberCount > filters.maxSubs) {
+      return "Subs ${formatCompactNumber(subscriberCount)} > max ${formatCompactNumber(filters.maxSubs)}"
+    }
+    if (subscriberCount < filters.minSubs) {
+      return "Subs ${formatCompactNumber(subscriberCount)} < min ${formatCompactNumber(filters.minSubs)}"
+    }
+    if (shortCount == null || shortCount < 5 || medianViews == null) {
+      return "<5 Shorts on channel"
+    }
+    if (medianViews > filters.maxMedianViews) {
+      return "Median ${formatCompactNumber(medianViews)} > max ${formatCompactNumber(filters.maxMedianViews)}"
+    }
+    val actualMultiplier = multiplier ?: calculateMultiplier(0L, medianViews)
+    if (actualMultiplier < filters.minMultiplier) {
+      return "Multiplier ${actualMultiplier}x < ${filters.minMultiplier}x"
+    }
+    return null
   }
 }

@@ -209,6 +209,7 @@ fun MainAppContent(
   val progressMessage by viewModel.progressMessage.collectAsStateWithLifecycle()
   val recentSearches by viewModel.recentSearches.collectAsStateWithLifecycle()
   val outliers by viewModel.outliers.collectAsStateWithLifecycle()
+  val nearMisses by viewModel.nearMisses.collectAsStateWithLifecycle()
   val debugStats by viewModel.debugStats.collectAsStateWithLifecycle()
   val nextPageToken by viewModel.nextPageToken.collectAsStateWithLifecycle()
   val savedOutliers by viewModel.savedOutliers.collectAsStateWithLifecycle()
@@ -334,6 +335,7 @@ fun MainAppContent(
         composable(ROUTE_RESULTS) {
           ResultsScreen(
             outliers = outliers,
+            nearMisses = nearMisses,
             keyword = filters.keyword,
             debugStats = debugStats,
             isLoading = isSearching,
@@ -342,6 +344,7 @@ fun MainAppContent(
             onLoadMore = { viewModel.loadMore() },
             onTryMore = { viewModel.tryMore(it) },
             onLoosenFilters = { viewModel.loosenFilters() },
+            onApplyEmptyStageFix = { viewModel.applyEmptyStageFix(it) },
             onSaveToggle = { viewModel.toggleSave(it) },
             onAiClick = { openAiSheetFor(it) }
           )

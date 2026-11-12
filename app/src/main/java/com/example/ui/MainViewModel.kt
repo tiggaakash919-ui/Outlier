@@ -14,7 +14,10 @@ import com.example.data.repository.SavedRepository
 import com.example.data.repository.SearchResult
 import com.example.domain.AiUiState
 import com.example.domain.DebugStats
+import com.example.domain.EmptyStageReason
 import com.example.domain.FilterOptions
+import com.example.domain.NearMissVideo
+import com.example.domain.OutlierCalculator
 import com.example.domain.OutlierVideo
 import com.example.domain.PresetType
 import com.example.domain.Presets
@@ -82,6 +85,9 @@ class MainViewModel(
   private val _outliers = MutableStateFlow<List<OutlierVideo>>(emptyList())
   val outliers: StateFlow<List<OutlierVideo>> = _outliers.asStateFlow()
 
+  private val _nearMisses = MutableStateFlow<List<NearMissVideo>>(emptyList())
+  val nearMisses: StateFlow<List<NearMissVideo>> = _nearMisses.asStateFlow()
+
   private val _debugStats = MutableStateFlow(DebugStats())
   val debugStats: StateFlow<DebugStats> = _debugStats.asStateFlow()
 
@@ -123,11 +129,13 @@ class MainViewModel(
   }
 
   fun updateFilters(newFilters: FilterOptions) {
-    _filters.value = newFilters
+    _filters.value = newFilters.withTrimmedKeyword()
   }
 
   fun startSearch(forceRefresh: Boolean = false) {
-    val kw = _filters.value.keyword.trim()
+    val trimmedFilters = _filters.value.withTrimmedKeyword()
+    _filters.value = trimmedFilters
+    val kw = trimmedFilters.keyword
     if (kw.isBlank()) return
 
     // Add to recent searches
@@ -139,9 +147,10 @@ class MainViewModel(
     _currentScreen.value = Screen.RESULTS
 
     viewModelScope.launch {
-      when (val result = outlierRepository.searchOutliers(_filters.value, forceRefresh = forceRefresh)) {
+      when (val result = outlierRepository.searchOutliers(trimmedFilters, forceRefresh = forceRefresh)) {
         is SearchResult.Success -> {
           _outliers.value = result.outliers
+          _nearMisses.value = result.nearMisses
           _debugStats.value = result.debugStats
           _nextPageToken.value = result.nextPageToken
           _isSearching.value = false
@@ -160,15 +169,18 @@ class MainViewModel(
 
   fun loadMore() {
     val token = _nextPageToken.value ?: return
+    val trimmedFilters = _filters.value.withTrimmedKeyword()
+    _filters.value = trimmedFilters
     _isSearching.value = true
 
     viewModelScope.launch {
-      when (val result = outlierRepository.searchOutliers(_filters.value, pageToken = token)) {
+      when (val result = outlierRepository.searchOutliers(trimmedFilters, pageToken = token)) {
         is SearchResult.Success -> {
           // Merge and deduplicate by videoId
           val existingIds = _outliers.value.map { it.videoId }.toSet()
           val newItems = result.outliers.filter { !existingIds.contains(it.videoId) }
           _outliers.value = _outliers.value + newItems
+          _nearMisses.value = result.nearMisses
           _debugStats.value = result.debugStats
           _nextPageToken.value = result.nextPageToken
           _isSearching.value = false
@@ -188,9 +200,9 @@ class MainViewModel(
   fun tryMore(variantOrSlice: String) {
     val isSlice = variantOrSlice in listOf("7d", "30d", "90d", "6mo")
     val updatedFilters = if (isSlice) {
-      _filters.value.copy(recency = variantOrSlice)
+      _filters.value.copy(recency = variantOrSlice).withTrimmedKeyword()
     } else {
-      _filters.value.copy(keyword = variantOrSlice)
+      _filters.value.copy(keyword = variantOrSlice.trim())
     }
     _filters.value = updatedFilters
 
@@ -204,6 +216,7 @@ class MainViewModel(
             existingMap[newVid.videoId] = newVid
           }
           _outliers.value = existingMap.values.toList()
+          _nearMisses.value = result.nearMisses
           _debugStats.value = result.debugStats
           _nextPageToken.value = result.nextPageToken
           _isSearching.value = false
@@ -218,7 +231,12 @@ class MainViewModel(
 
   fun loosenFilters() {
     _filters.value = Presets.applyPreset(PresetType.LOOSE, _filters.value.keyword)
-    startSearch(forceRefresh = true)
+    startSearch(forceRefresh = false)
+  }
+
+  fun applyEmptyStageFix(stage: EmptyStageReason) {
+    _filters.value = OutlierCalculator.applyEmptyStageFix(_filters.value, stage)
+    startSearch(forceRefresh = false)
   }
 
   fun toggleSave(video: OutlierVideo) {

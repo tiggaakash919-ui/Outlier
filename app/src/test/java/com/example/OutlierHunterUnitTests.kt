@@ -2,10 +2,15 @@ package com.example
 
 import com.example.data.repository.SavedRepository
 import com.example.domain.BadgeTier
+import com.example.domain.DebugStats
 import com.example.domain.DurationParser
+import com.example.domain.EmptyStageReason
+import com.example.domain.FilterOptions
 import com.example.domain.MedianCalculator
 import com.example.domain.OutlierCalculator
 import com.example.domain.OutlierVideo
+import com.example.domain.PresetType
+import com.example.domain.Presets
 import com.example.domain.ShortStatus
 import com.example.domain.UushHelper
 import org.junit.Assert.assertEquals
@@ -68,6 +73,151 @@ class OutlierHunterUnitTests {
     assertEquals("1.2K", OutlierCalculator.formatCompactNumber(1200L))
     assertEquals("500K", OutlierCalculator.formatCompactNumber(500_000L))
     assertEquals("1.5M", OutlierCalculator.formatCompactNumber(1_500_000L))
+  }
+
+  @Test
+  fun testKeywordTrimmingAndLoosePreset() {
+    assertEquals("Minecraft", OutlierCalculator.trimKeyword("  Minecraft  "))
+    assertEquals("minecraft shorts", OutlierCalculator.trimKeyword(" minecraft shorts \n"))
+
+    val rawFilter = FilterOptions(keyword = "Minecraft ")
+    assertEquals("Minecraft", rawFilter.withTrimmedKeyword().keyword)
+
+    val loose = Presets.applyPreset(PresetType.LOOSE, "  Minecraft  ")
+    assertEquals("Minecraft", loose.keyword)
+    assertEquals(0L, loose.minSubs)
+    assertEquals(100_000L, loose.maxSubs)
+    assertEquals(20_000L, loose.maxMedianViews)
+    assertEquals(100_000L, loose.minViralViews)
+    assertEquals(20, loose.minMultiplier)
+    assertEquals("30d", loose.recency)
+    assertEquals("Any", loose.regionCode)
+    assertEquals("Any", loose.language)
+  }
+
+  @Test
+  fun testSmartEmptyStageDetectionAndFixes() {
+    // 1. Dropped at duration or minViews stage
+    val statsMinViewsZero = DebugStats(
+      searchReturned = 80,
+      afterDurationFilter = 60,
+      afterMinViewsFilter = 0
+    )
+    val stage1 = OutlierCalculator.detectEmptyStage(statsMinViewsZero)
+    assertEquals(EmptyStageReason.DURATION_OR_MIN_VIEWS, stage1)
+    assertEquals("Itne views wale Shorts nahi mile", stage1.message)
+    val fixed1 = OutlierCalculator.applyEmptyStageFix(FilterOptions(keyword = "Minecraft ", minViralViews = 500_000L), stage1)
+    assertEquals("Minecraft", fixed1.keyword)
+    assertEquals(100_000L, fixed1.minViralViews)
+
+    // 2. Dropped at subs filter stage
+    val statsSubsZero = DebugStats(
+      searchReturned = 80,
+      afterDurationFilter = 60,
+      afterMinViewsFilter = 25,
+      uniqueChannels = 20,
+      afterSubsFilter = 0
+    )
+    val stage2 = OutlierCalculator.detectEmptyStage(statsSubsZero)
+    assertEquals(EmptyStageReason.SUBS_FILTER, stage2)
+    assertEquals("Sab channels bade hain (subs zyada)", stage2.message)
+    val fixed2 = OutlierCalculator.applyEmptyStageFix(FilterOptions(keyword = "Minecraft"), stage2)
+    assertEquals(0L, fixed2.minSubs)
+    assertEquals(100_000L, fixed2.maxSubs)
+    assertEquals("7d", fixed2.recency)
+
+    // 3. Dropped at median stage
+    val statsMedianZero = DebugStats(
+      searchReturned = 80,
+      afterDurationFilter = 60,
+      afterMinViewsFilter = 25,
+      uniqueChannels = 20,
+      afterSubsFilter = 6,
+      channelsWithTooFewShorts = 2,
+      channelsMedianTooHigh = 4,
+      channelsPassingMedian = 0
+    )
+    val stage3 = OutlierCalculator.detectEmptyStage(statsMedianZero)
+    assertEquals(EmptyStageReason.MEDIAN_STAGE, stage3)
+    assertEquals("Channels ke baaki Shorts bhi zyada views le rahe hain", stage3.message)
+    val fixed3 = OutlierCalculator.applyEmptyStageFix(FilterOptions(keyword = "Minecraft"), stage3)
+    assertEquals(20_000L, fixed3.maxMedianViews)
+
+    // 4. Dropped at multiplier stage
+    val statsMultiplierZero = DebugStats(
+      searchReturned = 80,
+      afterDurationFilter = 60,
+      afterMinViewsFilter = 25,
+      uniqueChannels = 20,
+      afterSubsFilter = 6,
+      channelsPassingMedian = 3,
+      finalOutliers = 0
+    )
+    val stage4 = OutlierCalculator.detectEmptyStage(statsMultiplierZero)
+    assertEquals(EmptyStageReason.MULTIPLIER_STAGE, stage4)
+    assertEquals("Multiplier kam hai", stage4.message)
+    val fixed4 = OutlierCalculator.applyEmptyStageFix(FilterOptions(keyword = "Minecraft"), stage4)
+    assertEquals(20, fixed4.minMultiplier)
+  }
+
+  @Test
+  fun testNearMissReasonGeneration() {
+    val defaultFilters = FilterOptions(
+      minSubs = 0L,
+      maxSubs = 10_000L,
+      maxMedianViews = 5_000L,
+      minMultiplier = 50
+    )
+
+    // 1. Subs exceeded: "Subs 250K > max 10K"
+    val reasonSubs = OutlierCalculator.buildNearMissReason(
+      subscriberCount = 250_000L,
+      shortCount = 10,
+      medianViews = 2_000L,
+      multiplier = 100,
+      filters = defaultFilters
+    )
+    assertEquals("Subs 250K > max 10K", reasonSubs)
+
+    // 2. Too few Shorts on channel: "<5 Shorts on channel"
+    val reasonFewShorts = OutlierCalculator.buildNearMissReason(
+      subscriberCount = 4_000L,
+      shortCount = null,
+      medianViews = null,
+      multiplier = null,
+      filters = defaultFilters
+    )
+    assertEquals("<5 Shorts on channel", reasonFewShorts)
+
+    // 3. Median too high: "Median 12K > max 5K"
+    val reasonMedian = OutlierCalculator.buildNearMissReason(
+      subscriberCount = 4_000L,
+      shortCount = 15,
+      medianViews = 12_000L,
+      multiplier = 80,
+      filters = defaultFilters
+    )
+    assertEquals("Median 12K > max 5K", reasonMedian)
+
+    // 4. Multiplier too low: "Multiplier 8x < 50x"
+    val reasonMultiplier = OutlierCalculator.buildNearMissReason(
+      subscriberCount = 4_000L,
+      shortCount = 15,
+      medianViews = 4_000L,
+      multiplier = 8,
+      filters = defaultFilters
+    )
+    assertEquals("Multiplier 8x < 50x", reasonMultiplier)
+
+    // 5. Passing candidate returns null
+    val passing = OutlierCalculator.buildNearMissReason(
+      subscriberCount = 4_000L,
+      shortCount = 15,
+      medianViews = 3_000L,
+      multiplier = 120,
+      filters = defaultFilters
+    )
+    assertNull(passing)
   }
 
   @Test

@@ -49,6 +49,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -87,6 +88,13 @@ fun HomeScreen(
 ) {
   val appStrings = LocalAppStrings.current
   var showAdvancedFilters by remember { mutableStateOf(false) }
+  var searchInput by remember { mutableStateOf(filters.keyword) }
+
+  LaunchedEffect(filters.keyword) {
+    if (searchInput.trim() != filters.keyword) {
+      searchInput = filters.keyword
+    }
+  }
 
   val nicheSuggestions = listOf("Tech", "Finance", "Motivation", "Facts", "Comedy", "Gaming", "Cooking")
   val isQuotaBlocked = quotaStatus.isSearchExceeded || quotaStatus.isMainExceeded
@@ -155,8 +163,11 @@ fun HomeScreen(
 
     // Search Input Field
     OutlinedTextField(
-      value = filters.keyword,
-      onValueChange = { onFiltersChange(filters.copy(keyword = it)) },
+      value = searchInput,
+      onValueChange = {
+        searchInput = it
+        onFiltersChange(filters.copy(keyword = it))
+      },
       label = { Text(appStrings.searchFieldLabel) },
       placeholder = { Text("Keywords...") },
       singleLine = true,
@@ -168,8 +179,11 @@ fun HomeScreen(
         )
       },
       trailingIcon = {
-        if (filters.keyword.isNotEmpty()) {
-          IconButton(onClick = { onFiltersChange(filters.copy(keyword = "")) }) {
+        if (searchInput.isNotEmpty()) {
+          IconButton(onClick = {
+            searchInput = ""
+            onFiltersChange(filters.copy(keyword = ""))
+          }) {
             Icon(imageVector = Icons.Default.Clear, contentDescription = "Clear")
           }
         }
@@ -347,7 +361,7 @@ fun HomeScreen(
             )
             Spacer(modifier = Modifier.height(6.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-              listOf(1_000L to "1K", 2_000L to "2K", 5_000L to "5K", 10_000L to "10K", 25_000L to "25K").forEach { (med, label) ->
+              listOf(1_000L to "1K", 2_000L to "2K", 5_000L to "5K", 10_000L to "10K", 20_000L to "20K", 25_000L to "25K").forEach { (med, label) ->
                 ElevatedFilterChip(
                   selected = filters.maxMedianViews == med,
                   onClick = { onFiltersChange(filters.copy(maxMedianViews = med)) },

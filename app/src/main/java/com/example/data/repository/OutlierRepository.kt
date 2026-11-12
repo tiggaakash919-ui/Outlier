@@ -11,6 +11,7 @@ import com.example.domain.DebugStats
 import com.example.domain.DurationParser
 import com.example.domain.FilterOptions
 import com.example.domain.MedianCalculator
+import com.example.domain.NearMissVideo
 import com.example.domain.OutlierCalculator
 import com.example.domain.OutlierVideo
 import com.example.domain.ShortStatus
@@ -39,6 +40,7 @@ import java.util.Locale
 sealed class SearchResult {
   data class Success(
     val outliers: List<OutlierVideo>,
+    val nearMisses: List<NearMissVideo> = emptyList(),
     val debugStats: DebugStats,
     val nextPageToken: String?,
     val isCacheHit: Boolean
@@ -69,6 +71,8 @@ class OutlierRepository(
   private val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
   private val listType = Types.newParameterizedType(List::class.java, OutlierVideo::class.java)
   private val outlierListAdapter = moshi.adapter<List<OutlierVideo>>(listType)
+  private val nearMissListType = Types.newParameterizedType(List::class.java, NearMissVideo::class.java)
+  private val nearMissListAdapter = moshi.adapter<List<NearMissVideo>>(nearMissListType)
   private val debugStatsAdapter = moshi.adapter(DebugStats::class.java)
 
   companion object {
@@ -76,7 +80,7 @@ class OutlierRepository(
   }
 
   fun createCacheKey(filters: FilterOptions, pageToken: String? = null): String {
-    val normKw = filters.keyword.trim().lowercase(Locale.ROOT)
+    val normKw = OutlierCalculator.trimKeyword(filters.keyword).lowercase(Locale.ROOT)
     return "kw=$normKw|p=${filters.pagesPerSearch}|subs=${filters.minSubs}-${filters.maxSubs}|views=${filters.minViralViews}|med=${filters.maxMedianViews}|mul=${filters.minMultiplier}|rec=${filters.recency}|reg=${filters.regionCode}|lang=${filters.language}|dur=${filters.maxDurationSeconds}|token=${pageToken ?: ""}"
   }
 
@@ -85,23 +89,26 @@ class OutlierRepository(
     pageToken: String? = null,
     forceRefresh: Boolean = false
   ): SearchResult = withContext(Dispatchers.IO) {
+    val cleanFilters = filters.withTrimmedKeyword()
     val apiKey = settingsStore.getDecryptedApiKey()
     if (apiKey.isNullOrBlank()) {
       return@withContext SearchResult.Error("API key nahi mili. Kripya pehle apni key daalein.", isKeyInvalid = true)
     }
 
-    val cacheKey = createCacheKey(filters, pageToken)
+    val cacheKey = createCacheKey(cleanFilters, pageToken)
 
     if (!forceRefresh) {
       val cached = searchCacheDao.getCache(cacheKey)
       if (cached != null && (System.currentTimeMillis() - cached.timestamp < CACHE_TTL_MS)) {
         try {
           val cachedResults = outlierListAdapter.fromJson(cached.resultsJson) ?: emptyList()
+          val cachedNearMisses = runCatching { nearMissListAdapter.fromJson(cached.nearMissesJson) }.getOrNull() ?: emptyList()
           val cachedStats = debugStatsAdapter.fromJson(cached.debugStatsJson) ?: DebugStats()
           // Update isSaved state dynamically
           val updatedWithSaved = cachedResults.map { it.copy(isSaved = savedDao.isSaved(it.videoId)) }
           return@withContext SearchResult.Success(
             outliers = updatedWithSaved,
+            nearMisses = cachedNearMisses,
             debugStats = cachedStats.copy(cacheHits = cachedStats.cacheHits + 1),
             nextPageToken = cached.nextPageToken,
             isCacheHit = true
@@ -114,8 +121,8 @@ class OutlierRepository(
 
     // Estimate cost: pagesPerSearch search calls + estimated main units
     val quotaCheck = quotaTracker.canAffordSearch(
-      pages = filters.pagesPerSearch,
-      estimatedUnits = filters.pagesPerSearch + 1 + 20 // rough initial estimate
+      pages = cleanFilters.pagesPerSearch,
+      estimatedUnits = cleanFilters.pagesPerSearch + 1 + 20 // rough initial estimate
     )
     if (quotaCheck is QuotaCheckResult.Blocked) {
       return@withContext SearchResult.Error(quotaCheck.reason, isQuotaExceeded = true)
@@ -128,24 +135,24 @@ class OutlierRepository(
       var channelsListCost = 0
       var perChannelCost = 0
 
-      // Step 1: search.list
+      // Step 1: search.list (pass trimmed keyword)
       val collectedVideoIds = mutableListOf<String>()
       var curToken: String? = pageToken
       var finalNextPageToken: String? = null
 
-      val publishedAfter = computePublishedAfterRfc(filters.recency)
-      val region = if (filters.regionCode.equals("Any", ignoreCase = true)) null else filters.regionCode
-      val relLang = when (filters.language.lowercase(Locale.ROOT)) {
+      val publishedAfter = computePublishedAfterRfc(cleanFilters.recency)
+      val region = if (cleanFilters.regionCode.equals("Any", ignoreCase = true)) null else cleanFilters.regionCode
+      val relLang = when (cleanFilters.language.lowercase(Locale.ROOT)) {
         "hindi" -> "hi"
         "english" -> "en"
         else -> null
       }
 
-      for (page in 1..filters.pagesPerSearch) {
-        _progressFlow.value = "Search kar rahe hain (Page $page/${filters.pagesPerSearch})..."
+      for (page in 1..cleanFilters.pagesPerSearch) {
+        _progressFlow.value = "Search kar rahe hain (Page $page/${cleanFilters.pagesPerSearch})..."
         val response = executeWithRetry {
           youTubeApi.searchVideos(
-            query = filters.keyword,
+            query = cleanFilters.keyword,
             pageToken = curToken,
             publishedAfter = publishedAfter,
             regionCode = region,
@@ -179,14 +186,18 @@ class OutlierRepository(
       val searchReturnedCount = collectedVideoIds.size
 
       if (collectedVideoIds.isEmpty()) {
-        val emptyStats = DebugStats(searchReturned = 0, pages = currentSearchCalls, searchCallsCost = currentSearchCalls)
-        return@withContext SearchResult.Success(emptyList(), emptyStats, null, false)
+        val emptyStats = DebugStats(
+          searchReturned = 0,
+          pages = currentSearchCalls,
+          searchCallsCost = currentSearchCalls
+        )
+        return@withContext SearchResult.Success(emptyList(), emptyList(), emptyStats, null, false)
       }
 
       // Step 2: videos.list in chunks of 50
+      // Separate duration filter and minViews filter clearly
       _progressFlow.value = "Videos ki details fetch ho rahi hain..."
-      val validCandidateVideos = mutableListOf<RawVideoCandidate>()
-      var afterDurationCount = 0
+      val allFetchedVideos = mutableListOf<RawVideoCandidate>()
 
       val videoChunks = collectedVideoIds.chunked(50)
       for (chunk in videoChunks) {
@@ -210,30 +221,31 @@ class OutlierRepository(
           val views = item.statistics?.viewCount?.toLongOrNull() ?: 0L
           val channelId = item.snippet?.channelId ?: continue
 
-          if (durSec <= filters.maxDurationSeconds) {
-            afterDurationCount++
-            if (views >= filters.minViralViews) {
-              validCandidateVideos.add(
-                RawVideoCandidate(
-                  videoId = item.id,
-                  title = item.snippet.title ?: "",
-                  description = item.snippet.description ?: "",
-                  tags = item.snippet.tags ?: emptyList(),
-                  thumbnailUrl = item.snippet.thumbnails?.bestUrl() ?: "",
-                  channelId = channelId,
-                  channelTitle = item.snippet.channelTitle ?: "",
-                  views = views,
-                  likes = item.statistics?.likeCount?.toLongOrNull() ?: 0L,
-                  comments = item.statistics?.commentCount?.toLongOrNull() ?: 0L,
-                  durationSeconds = durSec,
-                  publishedAt = item.snippet.publishedAt ?: ""
-                )
-              )
-            }
-          }
+          allFetchedVideos.add(
+            RawVideoCandidate(
+              videoId = item.id,
+              title = item.snippet.title ?: "",
+              description = item.snippet.description ?: "",
+              tags = item.snippet.tags ?: emptyList(),
+              thumbnailUrl = item.snippet.thumbnails?.bestUrl() ?: "",
+              channelId = channelId,
+              channelTitle = item.snippet.channelTitle ?: "",
+              views = views,
+              likes = item.statistics?.likeCount?.toLongOrNull() ?: 0L,
+              comments = item.statistics?.commentCount?.toLongOrNull() ?: 0L,
+              durationSeconds = durSec,
+              publishedAt = item.snippet.publishedAt ?: ""
+            )
+          )
         }
       }
 
+      // 2a: Apply duration check first
+      val durationFilteredVideos = allFetchedVideos.filter { it.durationSeconds <= cleanFilters.maxDurationSeconds }
+      val afterDurationCount = durationFilteredVideos.size
+
+      // 2b: Apply minViews check second
+      val validCandidateVideos = durationFilteredVideos.filter { it.views >= cleanFilters.minViralViews }
       val afterMinViewsCount = validCandidateVideos.size
       val uniqueChannels = validCandidateVideos.map { it.channelId }.distinct()
 
@@ -290,14 +302,14 @@ class OutlierRepository(
 
       // Filter channels by subs & hiddenSubs
       val passingChannelIds = mutableSetOf<String>()
-      val isFullRangeSubs = filters.minSubs <= 0L && filters.maxSubs >= 100_000L
+      val isFullRangeSubs = cleanFilters.minSubs <= 0L && cleanFilters.maxSubs >= 100_000L
 
       for (chId in uniqueChannels) {
         val chInfo = channelDataMap[chId] ?: continue
         if (chInfo.hasHiddenSubscribers && !isFullRangeSubs) {
           continue // skip hidden subs when not full range
         }
-        if (chInfo.subscriberCount in filters.minSubs..filters.maxSubs) {
+        if (chInfo.subscriberCount in cleanFilters.minSubs..cleanFilters.maxSubs) {
           passingChannelIds.add(chId)
         }
       }
@@ -309,6 +321,8 @@ class OutlierRepository(
       val channelMedianResults = mutableMapOf<String, ChannelMedianResult>()
       var uushCount = 0
       var uploadsFallbackCount = 0
+      var channelsWithTooFewShortsCount = 0
+      var channelsMedianTooHighCount = 0
       var channelsPassingMedianCount = 0
       var channelCacheHits = 0
 
@@ -330,14 +344,20 @@ class OutlierRepository(
               if (chInfo?.cachedMedian != null && chInfo.cachedShortCount != null && chInfo.cachedMedian > 0) {
                 synchronized(channelMedianResults) {
                   channelCacheHits++
-                  channelMedianResults[chId] = ChannelMedianResult(
-                    median = chInfo.cachedMedian,
-                    shortCount = chInfo.cachedShortCount,
-                    source = chInfo.cachedSource ?: "UUSH"
-                  )
-                  if (chInfo.cachedSource == "UPLOADS") uploadsFallbackCount++ else uushCount++
-                  if (chInfo.cachedMedian <= filters.maxMedianViews) {
-                    channelsPassingMedianCount++
+                  if (chInfo.cachedShortCount < 5) {
+                    channelsWithTooFewShortsCount++
+                  } else {
+                    channelMedianResults[chId] = ChannelMedianResult(
+                      median = chInfo.cachedMedian,
+                      shortCount = chInfo.cachedShortCount,
+                      source = chInfo.cachedSource ?: "UUSH"
+                    )
+                    if (chInfo.cachedSource == "UPLOADS") uploadsFallbackCount++ else uushCount++
+                    if (chInfo.cachedMedian <= cleanFilters.maxMedianViews) {
+                      channelsPassingMedianCount++
+                    } else {
+                      channelsMedianTooHighCount++
+                    }
                   }
                 }
               } else {
@@ -347,8 +367,8 @@ class OutlierRepository(
                     channelId = chId,
                     uploadsPlaylistId = chInfo?.uploadsPlaylistId,
                     viralVideoIds = viralVideoIdsFromThisChannel,
-                    maxDurationSeconds = filters.maxDurationSeconds,
-                    sampleSize = filters.samplePerChannel,
+                    maxDurationSeconds = cleanFilters.maxDurationSeconds,
+                    sampleSize = cleanFilters.samplePerChannel,
                     apiKey = apiKey,
                     onUnitsUsed = { units ->
                       synchronized(this@OutlierRepository) {
@@ -377,9 +397,15 @@ class OutlierRepository(
                   synchronized(channelMedianResults) {
                     channelMedianResults[chId] = medianResult
                     if (medianResult.source == "UPLOADS") uploadsFallbackCount++ else uushCount++
-                    if (medianResult.median <= filters.maxMedianViews) {
+                    if (medianResult.median <= cleanFilters.maxMedianViews) {
                       channelsPassingMedianCount++
+                    } else {
+                      channelsMedianTooHighCount++
                     }
+                  }
+                } else {
+                  synchronized(channelMedianResults) {
+                    channelsWithTooFewShortsCount++
                   }
                 }
               }
@@ -394,17 +420,58 @@ class OutlierRepository(
         jobs.awaitAll()
       }
 
-      // Step 5: Compute metrics and filter by minMultiplier
+      // Step 5: Compute metrics, filter by minMultiplier, and collect Near Misses (0 extra API units)
       val finalCandidates = mutableListOf<OutlierVideo>()
+      val rejectedCandidates = mutableListOf<NearMissVideo>()
+
       for (v in validCandidateVideos) {
-        val medianInfo = channelMedianResults[v.channelId] ?: continue
-        if (medianInfo.median > filters.maxMedianViews) continue
-
-        val multiplier = OutlierCalculator.calculateMultiplier(v.views, medianInfo.median)
-        if (multiplier < filters.minMultiplier) continue
-
         val chInfo = channelDataMap[v.channelId]
         val subs = chInfo?.subscriberCount ?: 0L
+        val hiddenSubs = chInfo?.hasHiddenSubscribers ?: false
+        val medianInfo = channelMedianResults[v.channelId]
+        val multiplier = if (medianInfo != null) {
+          OutlierCalculator.calculateMultiplier(v.views, medianInfo.median)
+        } else {
+          null
+        }
+
+        val rejectionReason = OutlierCalculator.buildNearMissReason(
+          subscriberCount = subs,
+          hiddenSubscribers = hiddenSubs,
+          shortCount = medianInfo?.shortCount,
+          medianViews = medianInfo?.median,
+          multiplier = multiplier,
+          filters = cleanFilters
+        )
+
+        if (rejectionReason != null) {
+          val stagePriority = when {
+            rejectionReason.startsWith("Multiplier") -> 4
+            rejectionReason.startsWith("Median") -> 3
+            rejectionReason == "<5 Shorts on channel" -> 2
+            else -> 1 // Subs filter
+          }
+          rejectedCandidates.add(
+            NearMissVideo(
+              videoId = v.videoId,
+              title = v.title,
+              thumbnailUrl = v.thumbnailUrl,
+              channelId = v.channelId,
+              channelTitle = v.channelTitle,
+              views = v.views,
+              subscriberCount = subs,
+              hiddenSubscriberCount = hiddenSubs,
+              medianViews = medianInfo?.median,
+              multiplier = multiplier,
+              reasonChip = rejectionReason,
+              stagePriority = stagePriority
+            )
+          )
+          continue
+        }
+
+        val validMedian = medianInfo!!.median
+        val validMultiplier = multiplier!!
         val viewsPerSub = OutlierCalculator.calculateViewsPerSub(v.views, subs)
         val isSaved = savedDao.isSaved(v.videoId)
 
@@ -418,10 +485,10 @@ class OutlierRepository(
             channelId = v.channelId,
             channelTitle = v.channelTitle,
             subscriberCount = subs,
-            hiddenSubscriberCount = chInfo?.hasHiddenSubscribers ?: false,
+            hiddenSubscriberCount = hiddenSubs,
             views = v.views,
-            channelMedianViews = medianInfo.median,
-            outlierMultiplier = multiplier,
+            channelMedianViews = validMedian,
+            outlierMultiplier = validMultiplier,
             viewsPerSub = viewsPerSub,
             likes = v.likes,
             comments = v.comments,
@@ -432,6 +499,15 @@ class OutlierRepository(
           )
         )
       }
+
+      // Sort near misses best first (furthest pipeline stage -> highest multiplier -> highest views), up to 10
+      val topNearMisses = rejectedCandidates
+        .sortedWith(
+          compareByDescending<NearMissVideo> { it.stagePriority }
+            .thenByDescending { it.multiplier ?: 0 }
+            .thenByDescending { it.views }
+        )
+        .take(10)
 
       // Step 6: Short verification (final candidates only, max 30, Semaphore(5))
       _progressFlow.value = "Shorts verify ho rahe hain..."
@@ -494,6 +570,8 @@ class OutlierRepository(
         afterMinViewsFilter = afterMinViewsCount,
         uniqueChannels = uniqueChannels.size,
         afterSubsFilter = afterSubsFilterCount,
+        channelsWithTooFewShorts = channelsWithTooFewShortsCount,
+        channelsMedianTooHigh = channelsMedianTooHighCount,
         channelsPassingMedian = channelsPassingMedianCount,
         uushCount = uushCount,
         uploadsFallbackCount = uploadsFallbackCount,
@@ -507,7 +585,7 @@ class OutlierRepository(
         cacheHits = channelCacheHits
       )
 
-      // Step 7: Save to Room search cache
+      // Step 7: Save to Room search cache (including nearMisses)
       try {
         searchCacheDao.insertCache(
           SearchCacheEntity(
@@ -515,7 +593,8 @@ class OutlierRepository(
             timestamp = System.currentTimeMillis(),
             nextPageToken = finalNextPageToken,
             resultsJson = outlierListAdapter.toJson(verifiedOutliers),
-            debugStatsJson = debugStatsAdapter.toJson(debugStats)
+            debugStatsJson = debugStatsAdapter.toJson(debugStats),
+            nearMissesJson = nearMissListAdapter.toJson(topNearMisses)
           )
         )
       } catch (_: Exception) {
@@ -524,6 +603,7 @@ class OutlierRepository(
       _progressFlow.value = null
       return@withContext SearchResult.Success(
         outliers = verifiedOutliers,
+        nearMisses = topNearMisses,
         debugStats = debugStats,
         nextPageToken = finalNextPageToken,
         isCacheHit = false

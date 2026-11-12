@@ -18,7 +18,8 @@ data class SearchCacheEntity(
   val timestamp: Long,
   val nextPageToken: String? = null,
   val resultsJson: String,
-  val debugStatsJson: String
+  val debugStatsJson: String,
+  val nearMissesJson: String = "[]"
 )
 
 @Entity(tableName = "channel_cache")

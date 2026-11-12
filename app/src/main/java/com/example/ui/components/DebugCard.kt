@@ -39,9 +39,12 @@ import com.example.ui.theme.SecondaryCyan
 @Composable
 fun DebugCard(
   debugStats: DebugStats,
+  defaultExpanded: Boolean = debugStats.finalOutliers == 0,
   modifier: Modifier = Modifier
 ) {
-  var isExpanded by remember { mutableStateOf(false) }
+  var isExpanded by remember(debugStats.finalOutliers, defaultExpanded) {
+    mutableStateOf(defaultExpanded)
+  }
 
   Card(
     modifier = modifier
@@ -56,7 +59,8 @@ fun DebugCard(
       Row(
         modifier = Modifier
           .fillMaxWidth()
-          .clickable { isExpanded = !isExpanded },
+          .clickable { isExpanded = !isExpanded }
+          .testTag("debug_stats_header"),
         verticalAlignment = Alignment.CenterVertically
       ) {
         Icon(
@@ -85,6 +89,7 @@ fun DebugCard(
           modifier = Modifier
             .fillMaxWidth()
             .padding(top = 10.dp)
+            .testTag("debug_stats_content")
         ) {
           Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
           Spacer(modifier = Modifier.height(8.dp))
@@ -95,6 +100,8 @@ fun DebugCard(
             "→ after minViews filter: ${debugStats.afterMinViewsFilter}",
             "→ unique channels: ${debugStats.uniqueChannels}",
             "→ after subs filter (incl. hidden-sub skip): ${debugStats.afterSubsFilter}",
+            "→ channels <5 Shorts (skipped): ${debugStats.channelsWithTooFewShorts}",
+            "→ channels median > max (skipped): ${debugStats.channelsMedianTooHigh}",
             "→ channels with >=5 Shorts & median<=max: ${debugStats.channelsPassingMedian}   (UUSH: ${debugStats.uushCount} / uploads fallback: ${debugStats.uploadsFallbackCount})",
             "→ final outliers (>= minMultiplier): ${debugStats.finalOutliers}   (verified Shorts: ${debugStats.verifiedShorts})",
             "Cost: search calls ${debugStats.pages} | videos.list ${debugStats.videosListCost} | channels.list ${debugStats.channelsListCost} | per-channel ${debugStats.perChannelCost} | main total ${debugStats.mainTotalCost} | cache hits ${debugStats.cacheHits}"

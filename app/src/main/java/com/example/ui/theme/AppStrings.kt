@@ -29,7 +29,7 @@ data class AppStrings(
 ) {
   fun formatResultsHeader(context: Context, count: Int, keyword: String): String {
     val resId = if (isEnglish) R.string.results_header_en else R.string.results_header_hi
-    return context.getString(resId, count, keyword)
+    return context.getString(resId, count, keyword.trim())
   }
 }
 

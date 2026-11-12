@@ -14,6 +14,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,9 +32,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material3.AlertDialog
@@ -42,6 +47,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Divider
 import androidx.compose.material3.ElevatedFilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -72,9 +78,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.domain.DebugStats
+import com.example.domain.EmptyStageReason
+import com.example.domain.NearMissVideo
+import com.example.domain.OutlierCalculator
 import com.example.domain.OutlierVideo
 import com.example.domain.ShortStatus
 import com.example.domain.SortOption
@@ -92,6 +102,7 @@ import java.time.Year
 @Composable
 fun ResultsScreen(
   outliers: List<OutlierVideo>,
+  nearMisses: List<NearMissVideo> = emptyList(),
   keyword: String,
   debugStats: DebugStats,
   isLoading: Boolean,
@@ -100,6 +111,7 @@ fun ResultsScreen(
   onLoadMore: () -> Unit,
   onTryMore: (String) -> Unit, // variant or time slice
   onLoosenFilters: () -> Unit,
+  onApplyEmptyStageFix: (EmptyStageReason) -> Unit = {},
   onSaveToggle: (OutlierVideo) -> Unit,
   onAiClick: (OutlierVideo) -> Unit,
   modifier: Modifier = Modifier
@@ -108,6 +120,7 @@ fun ResultsScreen(
   val appStrings = LocalAppStrings.current
   val snackbarHostState = remember { SnackbarHostState() }
   val coroutineScope = rememberCoroutineScope()
+  val trimmedKeyword = remember(keyword) { OutlierCalculator.trimKeyword(keyword) }
 
   var selectedSort by remember { mutableStateOf(SortOption.MULTIPLIER) }
   var showNonShorts by remember { mutableStateOf(false) }
@@ -162,12 +175,13 @@ fun ResultsScreen(
       item {
         Spacer(modifier = Modifier.height(10.dp))
 
-        // Header: "{N} outliers mile for '{kw}'"
+        // Header: "{N} outliers mile for '{kw}'" (trimmed keyword)
         Text(
-          text = appStrings.formatResultsHeader(context, displayList.size, keyword),
+          text = appStrings.formatResultsHeader(context, displayList.size, trimmedKeyword),
           fontSize = 20.sp,
           fontWeight = FontWeight.Bold,
-          color = MaterialTheme.colorScheme.onBackground
+          color = MaterialTheme.colorScheme.onBackground,
+          modifier = Modifier.testTag("results_header_title")
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -307,31 +321,33 @@ fun ResultsScreen(
         }
       }
 
-      // Empty state
+      // Smart Empty state (Requirement 4)
       if (!isLoading && displayList.isEmpty()) {
+        val detectedStage = OutlierCalculator.detectEmptyStage(debugStats)
         item {
           Card(
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp)
+            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
           ) {
             Column(
-              modifier = Modifier.padding(24.dp).fillMaxWidth(),
+              modifier = Modifier.padding(22.dp).fillMaxWidth(),
               horizontalAlignment = Alignment.CenterHorizontally
             ) {
               Icon(
                 imageVector = Icons.Default.SearchOff,
                 contentDescription = null,
                 tint = AccentRed,
-                modifier = Modifier.size(48.dp)
+                modifier = Modifier.size(44.dp)
               )
-              Spacer(modifier = Modifier.height(12.dp))
+              Spacer(modifier = Modifier.height(10.dp))
               Text(
-                text = appStrings.resultsEmptyTitle,
+                text = detectedStage.message,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
-                textAlign = TextAlign.Center
+                textAlign = TextAlign.Center,
+                modifier = Modifier.testTag("empty_state_stage_message")
               )
               Spacer(modifier = Modifier.height(6.dp))
               Text(
@@ -341,13 +357,42 @@ fun ResultsScreen(
                 textAlign = TextAlign.Center
               )
               Spacer(modifier = Modifier.height(16.dp))
+
+              // Targeted one-tap fix button
               Button(
+                onClick = { onApplyEmptyStageFix(detectedStage) },
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .testTag("empty_stage_fix_button")
+              ) {
+                Icon(
+                  imageVector = Icons.Default.AutoFixHigh,
+                  contentDescription = null,
+                  modifier = Modifier.size(16.dp),
+                  tint = Color.White
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                  text = detectedStage.fixButtonLabel,
+                  fontSize = 14.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = Color.White
+                )
+              }
+
+              Spacer(modifier = Modifier.height(10.dp))
+
+              // Existing "Loosen filters" button
+              OutlinedButton(
                 onClick = onLoosenFilters,
                 shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = PrimaryViolet),
-                modifier = Modifier.testTag("loosen_filters_button")
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .testTag("loosen_filters_button")
               ) {
-                Text(appStrings.loosenFiltersBtn, fontSize = 14.sp, color = Color.White)
+                Text(appStrings.loosenFiltersBtn, fontSize = 14.sp, color = PrimaryViolet)
               }
             }
           }
@@ -367,6 +412,17 @@ fun ResultsScreen(
           onAiClick = onAiClick,
           modifier = Modifier.animateItem()
         )
+      }
+
+      // Near misses section when final results < 5 (Requirement 5)
+      if (!isLoading && displayList.size < 5 && nearMisses.isNotEmpty()) {
+        item {
+          NearMissesSection(
+            nearMisses = nearMisses.take(10),
+            defaultExpanded = displayList.isEmpty(),
+            onOpenShort = { openShort(it) }
+          )
+        }
       }
 
       // Action Buttons: Load More & Try More
@@ -400,10 +456,13 @@ fun ResultsScreen(
         }
       }
 
-      // Expandable Debug Card
-      if (debugStats.searchReturned > 0 || debugStats.pages > 0) {
+      // Expandable Debug Card (Auto-expands when finalOutliers == 0)
+      if (!isLoading && (debugStats.searchReturned > 0 || debugStats.pages > 0 || displayList.isEmpty())) {
         item {
-          DebugCard(debugStats = debugStats)
+          DebugCard(
+            debugStats = debugStats,
+            defaultExpanded = displayList.isEmpty() || debugStats.finalOutliers == 0
+          )
           Spacer(modifier = Modifier.height(20.dp))
         }
       }
@@ -434,7 +493,7 @@ fun ResultsScreen(
             Text("Keyword Variants:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
             Spacer(modifier = Modifier.height(6.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-              listOf("$keyword shorts", "$keyword viral", "$keyword $currentYear").forEach { variant ->
+              listOf("$trimmedKeyword shorts", "$trimmedKeyword viral", "$trimmedKeyword $currentYear").forEach { variant ->
                 ElevatedFilterChip(
                   selected = false,
                   onClick = {
@@ -470,6 +529,110 @@ fun ResultsScreen(
           }
         }
       )
+    }
+  }
+}
+
+@Composable
+private fun NearMissesSection(
+  nearMisses: List<NearMissVideo>,
+  defaultExpanded: Boolean,
+  onOpenShort: (String) -> Unit
+) {
+  var isExpanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
+
+  Card(
+    shape = RoundedCornerShape(18.dp),
+    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    modifier = Modifier
+      .fillMaxWidth()
+      .testTag("near_misses_card")
+  ) {
+    Column(modifier = Modifier.padding(14.dp)) {
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .clickable { isExpanded = !isExpanded }
+          .testTag("near_misses_header"),
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        Text(
+          text = "Near misses (filters se bahar) (${nearMisses.size})",
+          fontSize = 14.sp,
+          fontWeight = FontWeight.Bold,
+          color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        Icon(
+          imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+          contentDescription = if (isExpanded) "Collapse" else "Expand",
+          tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+      }
+
+      AnimatedVisibility(visible = isExpanded) {
+        Column(
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp),
+          verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+          Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+
+          nearMisses.forEach { item ->
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                .clickable { onOpenShort(item.videoId) }
+                .padding(10.dp)
+                .testTag("near_miss_item_${item.videoId}"),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+              Column(modifier = Modifier.weight(1f)) {
+                Text(
+                  text = item.title,
+                  fontSize = 13.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = MaterialTheme.colorScheme.onSurface,
+                  maxLines = 2,
+                  overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                  text = "${item.channelTitle} · ${OutlierCalculator.formatCompactNumber(item.views)} views · ${OutlierCalculator.formatSubscribers(item.subscriberCount, item.hiddenSubscriberCount)} subs",
+                  fontSize = 11.sp,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                // Red reason chip
+                Box(
+                  modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(AccentRed.copy(alpha = 0.18f))
+                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                ) {
+                  Text(
+                    text = item.reasonChip,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AccentRed
+                  )
+                }
+              }
+
+              Icon(
+                imageVector = Icons.Default.PlayArrow,
+                contentDescription = "Open Short",
+                tint = SecondaryCyan,
+                modifier = Modifier.size(20.dp)
+              )
+            }
+          }
+        }
+      }
     }
   }
 }

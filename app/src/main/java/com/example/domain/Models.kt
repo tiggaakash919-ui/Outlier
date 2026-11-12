@@ -37,6 +37,43 @@ data class OutlierVideo(
   val savedAt: Long = 0L
 )
 
+data class NearMissVideo(
+  val videoId: String,
+  val title: String,
+  val thumbnailUrl: String,
+  val channelId: String,
+  val channelTitle: String,
+  val views: Long,
+  val subscriberCount: Long,
+  val hiddenSubscriberCount: Boolean = false,
+  val medianViews: Long? = null,
+  val multiplier: Int? = null,
+  val reasonChip: String,
+  val stagePriority: Int = 0
+)
+
+enum class EmptyStageReason(
+  val message: String,
+  val fixButtonLabel: String
+) {
+  DURATION_OR_MIN_VIEWS(
+    message = "Itne views wale Shorts nahi mile",
+    fixButtonLabel = "Min views 100K"
+  ),
+  SUBS_FILTER(
+    message = "Sab channels bade hain (subs zyada)",
+    fixButtonLabel = "Subs 0–100K + recency 7d"
+  ),
+  MEDIAN_STAGE(
+    message = "Channels ke baaki Shorts bhi zyada views le rahe hain",
+    fixButtonLabel = "Max median 20K"
+  ),
+  MULTIPLIER_STAGE(
+    message = "Multiplier kam hai",
+    fixButtonLabel = "Min multiplier 20x"
+  )
+}
+
 data class AiAnalysis(
   val whyViral: List<String> = emptyList(),
   val hookIdeas: List<String> = emptyList(),
@@ -64,19 +101,22 @@ data class FilterOptions(
   val language: String = "Any", // Hindi, English, Any
   val maxDurationSeconds: Long = 180L, // 60s, 180s
   val pagesPerSearch: Int = 2 // 1, 2, 3
-)
+) {
+  fun withTrimmedKeyword(): FilterOptions = copy(keyword = keyword.trim())
+}
 
 enum class PresetType {
   TINY_GEMS, // subs 0–1K, median <=2K, min views 500K, 100x
   BALANCED,  // subs 0-10K, median <=5K, min views 500K, 50x
-  LOOSE      // subs 0–100K, median <=10K, min views 100K, 20x
+  LOOSE      // subs 0–100K, median <=20K, min views 100K, 20x, recency 30d, region Any, language Any
 }
 
 object Presets {
   fun applyPreset(type: PresetType, currentKw: String): FilterOptions {
+    val trimmedKw = currentKw.trim()
     return when (type) {
       PresetType.TINY_GEMS -> FilterOptions(
-        keyword = currentKw,
+        keyword = trimmedKw,
         minSubs = 0L,
         maxSubs = 1_000L,
         minViralViews = 500_000L,
@@ -90,7 +130,7 @@ object Presets {
         pagesPerSearch = 2
       )
       PresetType.BALANCED -> FilterOptions(
-        keyword = currentKw,
+        keyword = trimmedKw,
         minSubs = 0L,
         maxSubs = 10_000L,
         minViralViews = 500_000L,
@@ -104,15 +144,15 @@ object Presets {
         pagesPerSearch = 2
       )
       PresetType.LOOSE -> FilterOptions(
-        keyword = currentKw,
+        keyword = trimmedKw,
         minSubs = 0L,
         maxSubs = 100_000L,
         minViralViews = 100_000L,
-        maxMedianViews = 10_000L,
+        maxMedianViews = 20_000L,
         minMultiplier = 20,
         samplePerChannel = 50,
-        recency = "90d",
-        regionCode = "IN",
+        recency = "30d",
+        regionCode = "Any",
         language = "Any",
         maxDurationSeconds = 180L,
         pagesPerSearch = 2
@@ -128,6 +168,8 @@ data class DebugStats(
   val afterMinViewsFilter: Int = 0,
   val uniqueChannels: Int = 0,
   val afterSubsFilter: Int = 0,
+  val channelsWithTooFewShorts: Int = 0,
+  val channelsMedianTooHigh: Int = 0,
   val channelsPassingMedian: Int = 0,
   val uushCount: Int = 0,
   val uploadsFallbackCount: Int = 0,
