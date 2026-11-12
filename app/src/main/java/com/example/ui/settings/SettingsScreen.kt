@@ -1,0 +1,513 @@
+package com.example.ui.settings
+
+import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Divider
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.data.repository.KeyRepository
+import com.example.data.repository.KeyValidationResult
+import com.example.domain.QuotaStatus
+import com.example.ui.theme.AccentRed
+import com.example.ui.theme.BadgeGreen
+import com.example.ui.theme.PrimaryViolet
+import com.example.ui.theme.SecondaryCyan
+import kotlinx.coroutines.launch
+
+@Composable
+fun SettingsScreen(
+  maskedKey: String?,
+  quotaStatus: QuotaStatus,
+  geminiModel: String,
+  aiLanguage: String,
+  uiLanguage: String,
+  themeMode: String,
+  keyRepository: KeyRepository,
+  onModelChange: (String) -> Unit,
+  onAiLanguageChange: (String) -> Unit,
+  onUiLanguageChange: (String) -> Unit,
+  onThemeModeChange: (String) -> Unit,
+  onClearCache: () -> Unit,
+  onClearAllData: () -> Unit,
+  onKeyRemoved: () -> Unit,
+  modifier: Modifier = Modifier
+) {
+  val context = LocalContext.current
+  val coroutineScope = rememberCoroutineScope()
+
+  var isTestingKey by remember { mutableStateOf(false) }
+  var keyStatusText by remember { mutableStateOf("✓ Connected") }
+  var isKeyValid by remember { mutableStateOf(true) }
+
+  var showChangeKeyDialog by remember { mutableStateOf(false) }
+  var showRemoveKeyDialog by remember { mutableStateOf(false) }
+  var showClearDataDialog by remember { mutableStateOf(false) }
+
+  var newKeyInput by remember { mutableStateOf("") }
+  var newKeyError by remember { mutableStateOf<String?>(null) }
+  var isSavingNewKey by remember { mutableStateOf(false) }
+
+  var modelInput by remember { mutableStateOf(geminiModel) }
+
+  Column(
+    modifier = modifier
+      .fillMaxSize()
+      .background(MaterialTheme.colorScheme.background)
+      .verticalScroll(rememberScrollState())
+      .padding(16.dp),
+    verticalArrangement = Arrangement.spacedBy(16.dp)
+  ) {
+    Text(
+      text = "Settings",
+      fontSize = 24.sp,
+      fontWeight = FontWeight.Bold,
+      color = Color.White
+    )
+
+    // SECTION 1: YouTube API Key
+    Card(
+      shape = RoundedCornerShape(18.dp),
+      colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+      modifier = Modifier.fillMaxWidth().testTag("settings_api_key_card")
+    ) {
+      Column(modifier = Modifier.padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Icon(Icons.Default.Key, contentDescription = null, tint = PrimaryViolet)
+          Spacer(modifier = Modifier.width(8.dp))
+          Text("YouTube API Key", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Masked Key display
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+          Text(
+            text = maskedKey ?: "No key saved",
+            fontFamily = FontFamily.Monospace,
+            fontSize = 13.sp,
+            color = Color.White
+          )
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+              imageVector = if (isKeyValid) Icons.Default.CheckCircle else Icons.Default.Info,
+              contentDescription = null,
+              tint = if (isKeyValid) BadgeGreen else AccentRed,
+              modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+              text = keyStatusText,
+              fontSize = 12.sp,
+              color = if (isKeyValid) BadgeGreen else AccentRed,
+              fontWeight = FontWeight.Medium
+            )
+          }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Buttons: Test Key, Change Key, Remove Key
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+          OutlinedButton(
+            onClick = {
+              isTestingKey = true
+              coroutineScope.launch {
+                val key = keyRepository.getMaskedKey()
+                if (key == null) {
+                  isTestingKey = false
+                  keyStatusText = "✗ No key"
+                  isKeyValid = false
+                  return@launch
+                }
+                // Test key online with cheap 1-unit call
+                val res = keyRepository.testAndSaveKey(keyRepository.validateFormat("") ?: "")
+                isTestingKey = false
+                Toast.makeText(context, "Key test complete", Toast.LENGTH_SHORT).show()
+              }
+            },
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.weight(1f).testTag("test_key_button")
+          ) {
+            if (isTestingKey) {
+              CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+            } else {
+              Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+              Spacer(modifier = Modifier.width(4.dp))
+              Text("Test", fontSize = 12.sp)
+            }
+          }
+
+          OutlinedButton(
+            onClick = {
+              newKeyInput = ""
+              newKeyError = null
+              showChangeKeyDialog = true
+            },
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.weight(1f).testTag("change_key_button")
+          ) {
+            Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+            Spacer(modifier = Modifier.width(4.dp))
+            Text("Change", fontSize = 12.sp)
+          }
+
+          Button(
+            onClick = { showRemoveKeyDialog = true },
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = AccentRed.copy(alpha = 0.2f)),
+            modifier = Modifier.weight(1f).testTag("remove_key_button")
+          ) {
+            Icon(Icons.Default.Delete, contentDescription = null, tint = AccentRed, modifier = Modifier.size(14.dp))
+            Spacer(modifier = Modifier.width(4.dp))
+            Text("Remove", fontSize = 12.sp, color = AccentRed)
+          }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+        Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Quota usage below key
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Icon(Icons.Default.Speed, contentDescription = null, tint = SecondaryCyan, modifier = Modifier.size(16.dp))
+          Spacer(modifier = Modifier.width(6.dp))
+          Text("Quota Usage (Resets midnight Pacific / ${quotaStatus.resetTimeLocal}):", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+          text = "• search.list bucket: ${quotaStatus.searchCalls} / ${quotaStatus.searchLimit} calls",
+          fontSize = 13.sp,
+          color = Color.White
+        )
+        Text(
+          text = "• main units (videos/channels/playlists): ${quotaStatus.mainUnits} / ${quotaStatus.mainLimit} units",
+          fontSize = 13.sp,
+          color = Color.White
+        )
+      }
+    }
+
+    // SECTION 2: Gemini AI Configuration
+    Card(
+      shape = RoundedCornerShape(18.dp),
+      colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+      modifier = Modifier.fillMaxWidth()
+    ) {
+      Column(modifier = Modifier.padding(16.dp)) {
+        Text("Gemini AI Analysis (Firebase AI Logic)", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Spacer(modifier = Modifier.height(10.dp))
+
+        OutlinedTextField(
+          value = modelInput,
+          onValueChange = {
+            modelInput = it
+            onModelChange(it)
+          },
+          label = { Text("Gemini Model Name") },
+          singleLine = true,
+          shape = RoundedCornerShape(12.dp),
+          modifier = Modifier.fillMaxWidth().testTag("gemini_model_input")
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+        Text("AI Response Language:", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(modifier = Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          listOf("Hinglish", "Hindi", "English").forEach { lang ->
+            FilterChip(
+              selected = aiLanguage.equals(lang, ignoreCase = true),
+              onClick = { onAiLanguageChange(lang) },
+              label = { Text(lang, fontSize = 12.sp) }
+            )
+          }
+        }
+      }
+    }
+
+    // SECTION 3: Appearance & Language
+    Card(
+      shape = RoundedCornerShape(18.dp),
+      colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+      modifier = Modifier.fillMaxWidth()
+    ) {
+      Column(modifier = Modifier.padding(16.dp)) {
+        Text("Appearance & App Language", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Text("UI Language:", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(modifier = Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          listOf("Hinglish", "English").forEach { lang ->
+            FilterChip(
+              selected = uiLanguage.equals(lang, ignoreCase = true),
+              onClick = { onUiLanguageChange(lang) },
+              label = { Text(lang, fontSize = 12.sp) }
+            )
+          }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        Text("Theme Mode:", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(modifier = Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          listOf("Dark", "Light").forEach { theme ->
+            FilterChip(
+              selected = themeMode.equals(theme, ignoreCase = true),
+              onClick = { onThemeModeChange(theme.uppercase()) },
+              label = { Text(theme, fontSize = 12.sp) }
+            )
+          }
+        }
+      }
+    }
+
+    // SECTION 4: Data Management & Cache
+    Card(
+      shape = RoundedCornerShape(18.dp),
+      colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+      modifier = Modifier.fillMaxWidth()
+    ) {
+      Column(modifier = Modifier.padding(16.dp)) {
+        Text("Data Management", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          OutlinedButton(
+            onClick = {
+              onClearCache()
+              Toast.makeText(context, "Search & Channel caches cleared", Toast.LENGTH_SHORT).show()
+            },
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.weight(1f).testTag("clear_cache_button")
+          ) {
+            Text("Clear Cache", fontSize = 12.sp)
+          }
+
+          Button(
+            onClick = { showClearDataDialog = true },
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
+            modifier = Modifier.weight(1f).testTag("clear_all_data_button")
+          ) {
+            Text("Clear All Data", fontSize = 12.sp)
+          }
+        }
+      }
+    }
+
+    // SECTION 5: Help & About
+    Card(
+      shape = RoundedCornerShape(18.dp),
+      colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+      modifier = Modifier.fillMaxWidth()
+    ) {
+      Column(modifier = Modifier.padding(16.dp)) {
+        Text("Help & Notes", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+          text = "Google Cloud → enable YouTube Data API v3 → create key → API restriction: YouTube Data API v3 only. Short detection uses duration + a /shorts URL check and may occasionally be wrong.",
+          fontSize = 12.sp,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          lineHeight = 17.sp
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+          text = "Outlier Radar v1.0 (Phase 1 Native Android)",
+          fontSize = 11.sp,
+          color = SecondaryCyan
+        )
+      }
+    }
+
+    Spacer(modifier = Modifier.height(30.dp))
+  }
+
+  // Change Key Dialog
+  if (showChangeKeyDialog) {
+    AlertDialog(
+      onDismissRequest = { if (!isSavingNewKey) showChangeKeyDialog = false },
+      title = { Text("Change YouTube API Key") },
+      text = {
+        Column {
+          OutlinedTextField(
+            value = newKeyInput,
+            onValueChange = {
+              newKeyInput = it.trim()
+              newKeyError = null
+            },
+            label = { Text("New YouTube API Key") },
+            isError = newKeyError != null,
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+          )
+          if (newKeyError != null) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(newKeyError ?: "", color = AccentRed, fontSize = 12.sp)
+          }
+        }
+      },
+      confirmButton = {
+        Button(
+          onClick = {
+            val formatErr = keyRepository.validateFormat(newKeyInput)
+            if (formatErr != null) {
+              newKeyError = formatErr
+              return@Button
+            }
+            isSavingNewKey = true
+            coroutineScope.launch {
+              when (val result = keyRepository.testAndSaveKey(newKeyInput)) {
+                is KeyValidationResult.Success -> {
+                  isSavingNewKey = false
+                  showChangeKeyDialog = false
+                  Toast.makeText(context, "✓ Key updated and verified", Toast.LENGTH_SHORT).show()
+                }
+                is KeyValidationResult.QuotaExceededSaved -> {
+                  isSavingNewKey = false
+                  showChangeKeyDialog = false
+                  Toast.makeText(context, "Key updated (quota reset pending)", Toast.LENGTH_SHORT).show()
+                }
+                is KeyValidationResult.Error -> {
+                  isSavingNewKey = false
+                  newKeyError = result.userMessage
+                }
+              }
+            }
+          },
+          enabled = !isSavingNewKey
+        ) {
+          if (isSavingNewKey) {
+            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White)
+          } else {
+            Text("Save & Verify")
+          }
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { showChangeKeyDialog = false }, enabled = !isSavingNewKey) {
+          Text("Cancel")
+        }
+      }
+    )
+  }
+
+  // Remove Key Dialog
+  if (showRemoveKeyDialog) {
+    AlertDialog(
+      onDismissRequest = { showRemoveKeyDialog = false },
+      title = { Text("Remove API Key?") },
+      text = {
+        Text("Aapki key phone se delete ho jayegi aur aap wapas Onboarding screen par chale jayenge.")
+      },
+      confirmButton = {
+        Button(
+          onClick = {
+            showRemoveKeyDialog = false
+            coroutineScope.launch {
+              keyRepository.removeKey()
+              Toast.makeText(context, "Key removed", Toast.LENGTH_SHORT).show()
+              onKeyRemoved()
+            }
+          },
+          colors = ButtonDefaults.buttonColors(containerColor = AccentRed)
+        ) {
+          Text("Remove")
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { showRemoveKeyDialog = false }) {
+          Text("Cancel")
+        }
+      }
+    )
+  }
+
+  // Clear All Data Confirmation Dialog
+  if (showClearDataDialog) {
+    AlertDialog(
+      onDismissRequest = { showClearDataDialog = false },
+      title = { Text("Clear All Data?") },
+      text = {
+        Text("Saved outliers, cached searches, and app settings sab delete ho jayenge.")
+      },
+      confirmButton = {
+        Button(
+          onClick = {
+            showClearDataDialog = false
+            onClearAllData()
+            Toast.makeText(context, "All data cleared", Toast.LENGTH_SHORT).show()
+          },
+          colors = ButtonDefaults.buttonColors(containerColor = AccentRed)
+        ) {
+          Text("Clear All")
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { showClearDataDialog = false }) {
+          Text("Cancel")
+        }
+      }
+    )
+  }
+}

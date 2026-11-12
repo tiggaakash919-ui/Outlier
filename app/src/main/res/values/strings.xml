@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Outlier Radar</string>
+    <string name="tagline">Viral Growth Engine</string>
+    <string name="onboarding_desc">Paste your YouTube Data API v3 key to start finding outlier videos. Your key stays on this device.</string>
+    <string name="api_key_label">YouTube API Key</string>
+    <string name="save_and_start">Save &amp; Start</string>
+    <string name="get_free_key">Get a free API key (Google Cloud Console)</string>
+    <string name="privacy_note">Aapki key sirf is phone me encrypted save hoti hai. Kisi server pe nahi jaati.</string>
+</resources>

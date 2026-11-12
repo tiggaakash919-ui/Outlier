@@ -1,0 +1,6 @@
+{
+  "name": "Outlier Radar",
+  "description": "YouTube Shorts Outlier Finder for discovering viral breakout content from small channels.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
