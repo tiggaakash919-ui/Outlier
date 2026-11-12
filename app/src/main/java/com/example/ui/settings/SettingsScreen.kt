@@ -3,7 +3,6 @@ package com.example.ui.settings
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -30,8 +29,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Divider
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -39,6 +38,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,6 +59,7 @@ import com.example.data.repository.KeyValidationResult
 import com.example.domain.QuotaStatus
 import com.example.ui.theme.AccentRed
 import com.example.ui.theme.BadgeGreen
+import com.example.ui.theme.LocalAppStrings
 import com.example.ui.theme.PrimaryViolet
 import com.example.ui.theme.SecondaryCyan
 import kotlinx.coroutines.launch
@@ -82,6 +83,7 @@ fun SettingsScreen(
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
+  val appStrings = LocalAppStrings.current
   val coroutineScope = rememberCoroutineScope()
 
   var isTestingKey by remember { mutableStateOf(false) }
@@ -97,6 +99,11 @@ fun SettingsScreen(
   var isSavingNewKey by remember { mutableStateOf(false) }
 
   var modelInput by remember { mutableStateOf(geminiModel) }
+  LaunchedEffect(geminiModel) {
+    if (modelInput != geminiModel) {
+      modelInput = geminiModel
+    }
+  }
 
   Column(
     modifier = modifier
@@ -107,10 +114,10 @@ fun SettingsScreen(
     verticalArrangement = Arrangement.spacedBy(16.dp)
   ) {
     Text(
-      text = "Settings",
+      text = appStrings.settingsTitle,
       fontSize = 24.sp,
       fontWeight = FontWeight.Bold,
-      color = Color.White
+      color = MaterialTheme.colorScheme.onBackground
     )
 
     // SECTION 1: YouTube API Key
@@ -123,7 +130,12 @@ fun SettingsScreen(
         Row(verticalAlignment = Alignment.CenterVertically) {
           Icon(Icons.Default.Key, contentDescription = null, tint = PrimaryViolet)
           Spacer(modifier = Modifier.width(8.dp))
-          Text("YouTube API Key", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+          Text(
+            "YouTube API Key",
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface
+          )
         }
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -142,7 +154,7 @@ fun SettingsScreen(
             text = maskedKey ?: "No key saved",
             fontFamily = FontFamily.Monospace,
             fontSize = 13.sp,
-            color = Color.White
+            color = MaterialTheme.colorScheme.onSurface
           )
           Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
@@ -172,19 +184,29 @@ fun SettingsScreen(
             onClick = {
               isTestingKey = true
               coroutineScope.launch {
-                val key = keyRepository.getMaskedKey()
-                if (key == null) {
-                  isTestingKey = false
-                  keyStatusText = "✗ No key"
-                  isKeyValid = false
-                  return@launch
+                when (val res = keyRepository.testSavedKey()) {
+                  is KeyValidationResult.Success -> {
+                    isTestingKey = false
+                    isKeyValid = true
+                    keyStatusText = "✓ Connected"
+                    Toast.makeText(context, "✓ Key connected (1 unit used)", Toast.LENGTH_SHORT).show()
+                  }
+                  is KeyValidationResult.QuotaExceededSaved -> {
+                    isTestingKey = false
+                    isKeyValid = true
+                    keyStatusText = "✓ Connected (Quota full)"
+                    Toast.makeText(context, "Key sahi hai, par aaj ka quota khatam.", Toast.LENGTH_SHORT).show()
+                  }
+                  is KeyValidationResult.Error -> {
+                    isTestingKey = false
+                    isKeyValid = false
+                    keyStatusText = "✗ Invalid"
+                    Toast.makeText(context, res.userMessage, Toast.LENGTH_SHORT).show()
+                  }
                 }
-                // Test key online with cheap 1-unit call
-                val res = keyRepository.testAndSaveKey(keyRepository.validateFormat("") ?: "")
-                isTestingKey = false
-                Toast.makeText(context, "Key test complete", Toast.LENGTH_SHORT).show()
               }
             },
+            enabled = !isTestingKey,
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier.weight(1f).testTag("test_key_button")
           ) {
@@ -193,7 +215,7 @@ fun SettingsScreen(
             } else {
               Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
               Spacer(modifier = Modifier.width(4.dp))
-              Text("Test", fontSize = 12.sp)
+              Text("Test key", fontSize = 12.sp)
             }
           }
 
@@ -208,7 +230,7 @@ fun SettingsScreen(
           ) {
             Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
             Spacer(modifier = Modifier.width(4.dp))
-            Text("Change", fontSize = 12.sp)
+            Text("Change key", fontSize = 12.sp)
           }
 
           Button(
@@ -224,25 +246,29 @@ fun SettingsScreen(
         }
 
         Spacer(modifier = Modifier.height(14.dp))
-        Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
         Spacer(modifier = Modifier.height(10.dp))
 
         // Quota usage below key
         Row(verticalAlignment = Alignment.CenterVertically) {
           Icon(Icons.Default.Speed, contentDescription = null, tint = SecondaryCyan, modifier = Modifier.size(16.dp))
           Spacer(modifier = Modifier.width(6.dp))
-          Text("Quota Usage (Resets midnight Pacific / ${quotaStatus.resetTimeLocal}):", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+          Text(
+            "Quota Usage (Resets midnight Pacific / ${quotaStatus.resetTimeLocal}):",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+          )
         }
         Spacer(modifier = Modifier.height(6.dp))
         Text(
           text = "• search.list bucket: ${quotaStatus.searchCalls} / ${quotaStatus.searchLimit} calls",
           fontSize = 13.sp,
-          color = Color.White
+          color = MaterialTheme.colorScheme.onSurface
         )
         Text(
           text = "• main units (videos/channels/playlists): ${quotaStatus.mainUnits} / ${quotaStatus.mainLimit} units",
           fontSize = 13.sp,
-          color = Color.White
+          color = MaterialTheme.colorScheme.onSurface
         )
       }
     }
@@ -254,7 +280,12 @@ fun SettingsScreen(
       modifier = Modifier.fillMaxWidth()
     ) {
       Column(modifier = Modifier.padding(16.dp)) {
-        Text("Gemini AI Analysis (Firebase AI Logic)", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Text(
+          "Gemini AI Analysis (Firebase AI Logic)",
+          fontSize = 16.sp,
+          fontWeight = FontWeight.Bold,
+          color = MaterialTheme.colorScheme.onSurface
+        )
         Spacer(modifier = Modifier.height(10.dp))
 
         OutlinedTextField(
@@ -291,7 +322,12 @@ fun SettingsScreen(
       modifier = Modifier.fillMaxWidth()
     ) {
       Column(modifier = Modifier.padding(16.dp)) {
-        Text("Appearance & App Language", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Text(
+          "Appearance & App Language",
+          fontSize = 16.sp,
+          fontWeight = FontWeight.Bold,
+          color = MaterialTheme.colorScheme.onSurface
+        )
         Spacer(modifier = Modifier.height(10.dp))
 
         Text("UI Language:", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -301,7 +337,8 @@ fun SettingsScreen(
             FilterChip(
               selected = uiLanguage.equals(lang, ignoreCase = true),
               onClick = { onUiLanguageChange(lang) },
-              label = { Text(lang, fontSize = 12.sp) }
+              label = { Text(lang, fontSize = 12.sp) },
+              modifier = Modifier.testTag("ui_lang_$lang")
             )
           }
         }
@@ -311,11 +348,12 @@ fun SettingsScreen(
         Text("Theme Mode:", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(modifier = Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          listOf("Dark", "Light").forEach { theme ->
+          listOf("Dark", "Light", "System").forEach { theme ->
             FilterChip(
               selected = themeMode.equals(theme, ignoreCase = true),
               onClick = { onThemeModeChange(theme.uppercase()) },
-              label = { Text(theme, fontSize = 12.sp) }
+              label = { Text(theme, fontSize = 12.sp) },
+              modifier = Modifier.testTag("theme_mode_$theme")
             )
           }
         }
@@ -329,14 +367,19 @@ fun SettingsScreen(
       modifier = Modifier.fillMaxWidth()
     ) {
       Column(modifier = Modifier.padding(16.dp)) {
-        Text("Data Management", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Text(
+          "Data Management",
+          fontSize = 16.sp,
+          fontWeight = FontWeight.Bold,
+          color = MaterialTheme.colorScheme.onSurface
+        )
         Spacer(modifier = Modifier.height(10.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           OutlinedButton(
             onClick = {
               onClearCache()
-              Toast.makeText(context, "Search & Channel caches cleared", Toast.LENGTH_SHORT).show()
+              Toast.makeText(context, "Search, Channel & AI caches cleared", Toast.LENGTH_SHORT).show()
             },
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier.weight(1f).testTag("clear_cache_button")
@@ -350,7 +393,7 @@ fun SettingsScreen(
             colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
             modifier = Modifier.weight(1f).testTag("clear_all_data_button")
           ) {
-            Text("Clear All Data", fontSize = 12.sp)
+            Text("Clear All Data", fontSize = 12.sp, color = Color.White)
           }
         }
       }
@@ -363,18 +406,24 @@ fun SettingsScreen(
       modifier = Modifier.fillMaxWidth()
     ) {
       Column(modifier = Modifier.padding(16.dp)) {
-        Text("Help & Notes", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Text(
+          "Help & Notes",
+          fontSize = 15.sp,
+          fontWeight = FontWeight.Bold,
+          color = MaterialTheme.colorScheme.onSurface
+        )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-          text = "Google Cloud → enable YouTube Data API v3 → create key → API restriction: YouTube Data API v3 only. Short detection uses duration + a /shorts URL check and may occasionally be wrong.",
+          text = appStrings.settingsHelpText,
           fontSize = 12.sp,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
           lineHeight = 17.sp
         )
         Spacer(modifier = Modifier.height(12.dp))
         Text(
-          text = "Outlier Radar v1.0 (Phase 1 Native Android)",
-          fontSize = 11.sp,
+          text = "About: Outlier Radar v1.0",
+          fontSize = 12.sp,
+          fontWeight = FontWeight.SemiBold,
           color = SecondaryCyan
         )
       }
@@ -421,11 +470,17 @@ fun SettingsScreen(
                 is KeyValidationResult.Success -> {
                   isSavingNewKey = false
                   showChangeKeyDialog = false
+                  isKeyValid = true
+                  keyStatusText = "✓ Connected"
+                  onKeyRemoved() // refreshes masked key
                   Toast.makeText(context, "✓ Key updated and verified", Toast.LENGTH_SHORT).show()
                 }
                 is KeyValidationResult.QuotaExceededSaved -> {
                   isSavingNewKey = false
                   showChangeKeyDialog = false
+                  isKeyValid = true
+                  keyStatusText = "✓ Connected (Quota full)"
+                  onKeyRemoved()
                   Toast.makeText(context, "Key updated (quota reset pending)", Toast.LENGTH_SHORT).show()
                 }
                 is KeyValidationResult.Error -> {
@@ -472,7 +527,7 @@ fun SettingsScreen(
           },
           colors = ButtonDefaults.buttonColors(containerColor = AccentRed)
         ) {
-          Text("Remove")
+          Text("Remove", color = Color.White)
         }
       },
       dismissButton = {
@@ -500,7 +555,7 @@ fun SettingsScreen(
           },
           colors = ButtonDefaults.buttonColors(containerColor = AccentRed)
         ) {
-          Text("Clear All")
+          Text("Clear All", color = Color.White)
         }
       },
       dismissButton = {

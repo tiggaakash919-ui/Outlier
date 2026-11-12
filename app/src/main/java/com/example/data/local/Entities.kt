@@ -59,5 +59,15 @@ data class SavedOutlierEntity(
   val thumbnailUrl: String,
   val description: String,
   val isShort: Boolean,
+  val shortStatus: String = "CONFIRMED_SHORT",
   val savedAt: Long
+)
+
+@Entity(tableName = "ai_cache")
+data class AiCacheEntity(
+  @PrimaryKey val cacheKey: String, // "{videoId}_{language}"
+  val videoId: String,
+  val language: String,
+  val responseJson: String,
+  val timestamp: Long
 )

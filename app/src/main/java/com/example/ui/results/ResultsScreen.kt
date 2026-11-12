@@ -7,6 +7,12 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -59,6 +65,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -74,6 +82,7 @@ import com.example.ui.components.DebugCard
 import com.example.ui.components.OutlierCard
 import com.example.ui.theme.AccentRed
 import com.example.ui.theme.BadgeYellow
+import com.example.ui.theme.LocalAppStrings
 import com.example.ui.theme.PrimaryViolet
 import com.example.ui.theme.SecondaryCyan
 import kotlinx.coroutines.launch
@@ -96,6 +105,7 @@ fun ResultsScreen(
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
+  val appStrings = LocalAppStrings.current
   val snackbarHostState = remember { SnackbarHostState() }
   val coroutineScope = rememberCoroutineScope()
 
@@ -154,10 +164,10 @@ fun ResultsScreen(
 
         // Header: "{N} outliers mile for '{kw}'"
         Text(
-          text = "${displayList.size} outliers mile for '$keyword'",
+          text = appStrings.formatResultsHeader(context, displayList.size, keyword),
           fontSize = 20.sp,
           fontWeight = FontWeight.Bold,
-          color = Color.White
+          color = MaterialTheme.colorScheme.onBackground
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -187,7 +197,7 @@ fun ResultsScreen(
           horizontalArrangement = Arrangement.spacedBy(6.dp),
           verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-          SortOption.values().forEach { option ->
+          SortOption.entries.forEach { option ->
             FilterChip(
               selected = selectedSort == option,
               onClick = { selectedSort = option },
@@ -205,7 +215,7 @@ fun ResultsScreen(
           verticalAlignment = Alignment.CenterVertically
         ) {
           Text(
-            text = "Show non-Shorts videos",
+            text = appStrings.showNonShorts,
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
           )
@@ -241,7 +251,7 @@ fun ResultsScreen(
               )
               Spacer(modifier = Modifier.width(8.dp))
               Text(
-                text = "Ye results top-viewed search se aate hain, kuch hidden gems miss ho sakte hain. 'Try more' → time slices se zyada gems milenge.",
+                text = appStrings.resultsDisclaimer,
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 lineHeight = 16.sp,
@@ -263,33 +273,37 @@ fun ResultsScreen(
         }
       }
 
-      // Loading state with Shimmer/Progress indicator
+      // Loading state with Progress banner + Shimmer Placeholder Cards
       if (isLoading) {
         item {
           Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp)
+            modifier = Modifier.fillMaxWidth()
           ) {
-            Column(
-              modifier = Modifier.padding(24.dp).fillMaxWidth(),
-              horizontalAlignment = Alignment.CenterHorizontally
+            Row(
+              modifier = Modifier.padding(16.dp).fillMaxWidth(),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.Center
             ) {
               CircularProgressIndicator(
                 color = PrimaryViolet,
-                modifier = Modifier.size(36.dp),
-                strokeWidth = 3.dp
+                modifier = Modifier.size(24.dp),
+                strokeWidth = 2.5.dp
               )
-              Spacer(modifier = Modifier.height(14.dp))
+              Spacer(modifier = Modifier.width(12.dp))
               Text(
                 text = progressMessage ?: "Outliers dhoonde ja rahe hain...",
-                fontSize = 14.sp,
+                fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
-                color = SecondaryCyan,
-                textAlign = TextAlign.Center
+                color = SecondaryCyan
               )
             }
           }
+        }
+
+        items(3) {
+          ShimmerOutlierCardPlaceholder()
         }
       }
 
@@ -313,15 +327,15 @@ fun ResultsScreen(
               )
               Spacer(modifier = Modifier.height(12.dp))
               Text(
-                text = "Is filter combination me koi outlier nahi mila",
+                text = appStrings.resultsEmptyTitle,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.White,
+                color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center
               )
               Spacer(modifier = Modifier.height(6.dp))
               Text(
-                text = "Try loosening your subscriber or multiplier thresholds.",
+                text = appStrings.resultsEmptySubtitle,
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
@@ -333,14 +347,14 @@ fun ResultsScreen(
                 colors = ButtonDefaults.buttonColors(containerColor = PrimaryViolet),
                 modifier = Modifier.testTag("loosen_filters_button")
               ) {
-                Text("Loosen Filters (Loose Preset)", fontSize = 14.sp)
+                Text(appStrings.loosenFiltersBtn, fontSize = 14.sp, color = Color.White)
               }
             }
           }
         }
       }
 
-      // List of Outlier Cards
+      // List of Outlier Cards with animated placement
       items(
         items = displayList,
         key = { it.videoId }
@@ -350,7 +364,8 @@ fun ResultsScreen(
           onOpenClick = { openShort(it) },
           onSaveToggle = onSaveToggle,
           onCopyClick = { label, content -> copyToClipboard(label, content) },
-          onAiClick = onAiClick
+          onAiClick = onAiClick,
+          modifier = Modifier.animateItem()
         )
       }
 
@@ -370,7 +385,7 @@ fun ResultsScreen(
               ) {
                 Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Load more", fontSize = 14.sp)
+                Text("Load more", fontSize = 14.sp, color = Color.White)
               }
             }
 
@@ -411,7 +426,7 @@ fun ResultsScreen(
         text = {
           Column {
             Text(
-              text = "Estimated cost: ~1 search call + ~4-10 units. Channel cache will be reused to save quota.",
+              text = "Estimated cost: ~1-2 search calls + ~4-10 units. Channel cache will be reused to save quota.",
               fontSize = 13.sp,
               color = BadgeYellow
             )
@@ -455,6 +470,84 @@ fun ResultsScreen(
           }
         }
       )
+    }
+  }
+}
+
+@Composable
+private fun ShimmerOutlierCardPlaceholder() {
+  val transition = rememberInfiniteTransition(label = "shimmer")
+  val translateAnim by transition.animateFloat(
+    initialValue = 0f,
+    targetValue = 1000f,
+    animationSpec = infiniteRepeatable(
+      animation = tween(durationMillis = 1100, easing = LinearEasing),
+      repeatMode = RepeatMode.Restart
+    ),
+    label = "shimmer_translate"
+  )
+
+  val shimmerBrush = Brush.linearGradient(
+    colors = listOf(
+      MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+      MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f),
+      MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+    ),
+    start = Offset(translateAnim - 300f, translateAnim - 300f),
+    end = Offset(translateAnim, translateAnim)
+  )
+
+  Card(
+    shape = RoundedCornerShape(20.dp),
+    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    modifier = Modifier.fillMaxWidth()
+  ) {
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(14.dp),
+      horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+      Box(
+        modifier = Modifier
+          .width(105.dp)
+          .height(155.dp)
+          .clip(RoundedCornerShape(14.dp))
+          .background(shimmerBrush)
+      )
+      Column(
+        modifier = Modifier.weight(1f),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+      ) {
+        Box(
+          modifier = Modifier
+            .width(80.dp)
+            .height(22.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(shimmerBrush)
+        )
+        Box(
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(18.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(shimmerBrush)
+        )
+        Box(
+          modifier = Modifier
+            .fillMaxWidth(0.75f)
+            .height(18.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(shimmerBrush)
+        )
+        Box(
+          modifier = Modifier
+            .fillMaxWidth(0.55f)
+            .height(14.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(shimmerBrush)
+        )
+      }
     }
   }
 }

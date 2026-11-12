@@ -33,8 +33,23 @@ data class OutlierVideo(
   val durationSeconds: Long,
   val publishedAt: String,
   val shortStatus: ShortStatus = ShortStatus.UNVERIFIED,
-  val isSaved: Boolean = false
+  val isSaved: Boolean = false,
+  val savedAt: Long = 0L
 )
+
+data class AiAnalysis(
+  val whyViral: List<String> = emptyList(),
+  val hookIdeas: List<String> = emptyList(),
+  val titleIdeas: List<String> = emptyList(),
+  val contentIdea: String = ""
+)
+
+sealed interface AiUiState {
+  data object Idle : AiUiState
+  data object Loading : AiUiState
+  data class Success(val analysis: AiAnalysis, val isCached: Boolean) : AiUiState
+  data class Error(val message: String) : AiUiState
+}
 
 data class FilterOptions(
   val keyword: String = "",

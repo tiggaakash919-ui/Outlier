@@ -1,9 +1,59 @@
 <resources>
     <string name="app_name">Outlier Radar</string>
     <string name="tagline">Viral Growth Engine</string>
+
+    <!-- Onboarding -->
     <string name="onboarding_desc">Paste your YouTube Data API v3 key to start finding outlier videos. Your key stays on this device.</string>
     <string name="api_key_label">YouTube API Key</string>
     <string name="save_and_start">Save &amp; Start</string>
     <string name="get_free_key">Get a free API key (Google Cloud Console)</string>
     <string name="privacy_note">Aapki key sirf is phone me encrypted save hoti hai. Kisi server pe nahi jaati.</string>
+    <string name="privacy_note_en">Your key is saved encrypted on this phone only. It is never sent to any server.</string>
+    <string name="how_to_create_key">Key kaise banaye? (2 min)</string>
+    <string name="how_to_create_key_en">How to create a key? (2 min)</string>
+
+    <!-- Home (Hinglish default + English) -->
+    <string name="home_subtitle">Viral Shorts Discovery</string>
+    <string name="search_label_hi">Niche ya keyword daalo (e.g. motivation, cooking)</string>
+    <string name="search_label_en">Enter niche or keyword (e.g. motivation, cooking)</string>
+    <string name="preset_strategies_hi">Preset Strategies</string>
+    <string name="preset_strategies_en">Preset Strategies</string>
+    <string name="advanced_filters_hi">Advanced Filters</string>
+    <string name="advanced_filters_en">Advanced Filters</string>
+    <string name="find_outliers_btn">Find Outliers 🔥</string>
+    <string name="recent_searches_hi">Recent Searches</string>
+    <string name="recent_searches_en">Recent Searches</string>
+
+    <!-- Results (Hinglish default + English) -->
+    <string name="results_header_hi">%1$d outliers mile for \'%2$s\'</string>
+    <string name="results_header_en">%1$d outliers found for \'%2$s\'</string>
+    <string name="results_disclaimer_hi">Ye results top-viewed search se aate hain, kuch hidden gems miss ho sakte hain. \'Try more\' → time slices se zyada gems milenge.</string>
+    <string name="results_disclaimer_en">These results come from top-viewed search, so some hidden gems might be missed. Use \'Try more\' → time slices to uncover more gems.</string>
+    <string name="results_empty_title_hi">Is filter combination me koi outlier nahi mila</string>
+    <string name="results_empty_title_en">No outliers found for this filter combination</string>
+    <string name="results_empty_sub_hi">Subscriber range badhao ya multiplier kam karke dekho.</string>
+    <string name="results_empty_sub_en">Try loosening your subscriber or multiplier thresholds.</string>
+    <string name="loosen_filters_btn_hi">Loosen filters (Loose Preset)</string>
+    <string name="loosen_filters_btn_en">Loosen filters (Loose Preset)</string>
+    <string name="show_non_shorts_hi">Show non-Shorts</string>
+    <string name="show_non_shorts_en">Show non-Shorts</string>
+    <string name="load_more_btn">Load more</string>
+    <string name="try_more_btn">Try more 🎯</string>
+
+    <!-- Saved (Hinglish default + English) -->
+    <string name="saved_title_hi">Saved Outliers</string>
+    <string name="saved_title_en">Saved Outliers</string>
+    <string name="saved_search_hint_hi">Saved items me search karo...</string>
+    <string name="saved_search_hint_en">Search within saved items...</string>
+    <string name="saved_empty_title_hi">Abhi tak koi outlier save nahi kiya</string>
+    <string name="saved_empty_title_en">No outliers saved yet</string>
+    <string name="saved_empty_sub_hi">Results me kisi bhi card pe 💾 dabake yaha save kar sakte hain. Swipe left karke hata sakte hain.</string>
+    <string name="saved_empty_sub_en">Tap 💾 on any outlier card in Results to save it here. Swipe left to remove.</string>
+
+    <!-- Settings (Hinglish default + English) -->
+    <string name="settings_title_hi">Settings</string>
+    <string name="settings_title_en">Settings</string>
+    <string name="settings_help_text">Google Cloud → enable YouTube Data API v3 → create key → API restriction: YouTube Data API v3 only. Short detection uses duration + a /shorts URL check and may occasionally be wrong.</string>
+    <string name="model_error_hi">Settings me model naam check karo</string>
+    <string name="model_error_en">Check the model name in Settings</string>
 </resources>

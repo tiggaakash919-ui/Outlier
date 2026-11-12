@@ -3,6 +3,9 @@ package com.example.ui.saved
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,6 +23,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
@@ -27,19 +32,27 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -47,11 +60,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
+import com.example.data.repository.SavedRepository
 import com.example.domain.OutlierVideo
 import com.example.ui.components.OutlierCard
+import com.example.ui.theme.AccentRed
+import com.example.ui.theme.LocalAppStrings
 import com.example.ui.theme.PrimaryViolet
 import com.example.ui.theme.SecondaryCyan
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SavedScreen(
   savedList: List<OutlierVideo>,
@@ -60,14 +82,75 @@ fun SavedScreen(
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
+  val appStrings = LocalAppStrings.current
+  val coroutineScope = rememberCoroutineScope()
   var searchQuery by remember { mutableStateOf("") }
+
+  // Storage Access Framework (CreateDocument) for UTF-8 BOM CSV export
+  val createDocumentLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.CreateDocument("text/csv")
+  ) { uri: Uri? ->
+    if (uri != null) {
+      coroutineScope.launch {
+        try {
+          val csvBytes = withContext(Dispatchers.Default) {
+            SavedRepository.generateCsvBytesWithBom(savedList)
+          }
+          withContext(Dispatchers.IO) {
+            context.contentResolver.openOutputStream(uri)?.use { out ->
+              out.write(csvBytes)
+              out.flush()
+            }
+          }
+          Toast.makeText(context, "✓ CSV exported successfully (UTF-8 with BOM)", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+          Toast.makeText(context, "CSV export failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+        }
+      }
+    }
+  }
+
+  fun shareCsvViaFileProvider() {
+    if (savedList.isEmpty()) {
+      Toast.makeText(context, "Save at least one outlier to export CSV", Toast.LENGTH_SHORT).show()
+      return
+    }
+    coroutineScope.launch {
+      try {
+        val csvBytes = withContext(Dispatchers.Default) {
+          SavedRepository.generateCsvBytesWithBom(savedList)
+        }
+        val fileUri = withContext(Dispatchers.IO) {
+          val exportDir = File(context.cacheDir, "exports")
+          if (!exportDir.exists()) exportDir.mkdirs()
+          val csvFile = File(exportDir, "outlier_radar_saved.csv")
+          csvFile.writeBytes(csvBytes)
+          FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            csvFile
+          )
+        }
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+          type = "text/csv"
+          putExtra(Intent.EXTRA_STREAM, fileUri)
+          putExtra(Intent.EXTRA_SUBJECT, "Outlier Radar - Saved Shorts CSV")
+          addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(shareIntent, "Share Saved Outliers CSV"))
+      } catch (e: Exception) {
+        Toast.makeText(context, "Share failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+      }
+    }
+  }
 
   val filteredList = if (searchQuery.isBlank()) {
     savedList
   } else {
     savedList.filter {
       it.title.contains(searchQuery, ignoreCase = true) ||
-        it.channelTitle.contains(searchQuery, ignoreCase = true)
+        it.channelTitle.contains(searchQuery, ignoreCase = true) ||
+        it.tags.any { tag -> tag.contains(searchQuery, ignoreCase = true) }
     }
   }
 
@@ -92,10 +175,10 @@ fun SavedScreen(
         ) {
           Column {
             Text(
-              text = "Saved Outliers",
+              text = appStrings.savedTitle,
               fontSize = 22.sp,
               fontWeight = FontWeight.Bold,
-              color = Color.White
+              color = MaterialTheme.colorScheme.onBackground
             )
             Text(
               text = "${savedList.size} items bookmarked",
@@ -107,7 +190,11 @@ fun SavedScreen(
           Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
               onClick = {
-                Toast.makeText(context, "CSV Export SAF integration is coming in Phase 3", Toast.LENGTH_SHORT).show()
+                if (savedList.isEmpty()) {
+                  Toast.makeText(context, "No saved outliers to export", Toast.LENGTH_SHORT).show()
+                } else {
+                  createDocumentLauncher.launch("outlier_radar_saved.csv")
+                }
               },
               shape = RoundedCornerShape(12.dp),
               modifier = Modifier.testTag("export_csv_button")
@@ -118,16 +205,14 @@ fun SavedScreen(
             }
 
             Button(
-              onClick = {
-                Toast.makeText(context, "CSV Share is coming in Phase 3", Toast.LENGTH_SHORT).show()
-              },
+              onClick = { shareCsvViaFileProvider() },
               shape = RoundedCornerShape(12.dp),
               colors = ButtonDefaults.buttonColors(containerColor = PrimaryViolet),
               modifier = Modifier.testTag("share_csv_button")
             ) {
               Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
               Spacer(modifier = Modifier.width(4.dp))
-              Text("Share", fontSize = 12.sp)
+              Text("Share", fontSize = 12.sp, color = Color.White)
             }
           }
         }
@@ -139,10 +224,17 @@ fun SavedScreen(
           OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = { Text("Saved items me search karo...") },
+            placeholder = { Text(appStrings.savedSearchHint) },
             singleLine = true,
             leadingIcon = {
               Icon(imageVector = Icons.Default.Search, contentDescription = null)
+            },
+            trailingIcon = {
+              if (searchQuery.isNotEmpty()) {
+                IconButton(onClick = { searchQuery = "" }) {
+                  Icon(imageVector = Icons.Default.Clear, contentDescription = "Clear search")
+                }
+              }
             },
             shape = RoundedCornerShape(14.dp),
             colors = OutlinedTextFieldDefaults.colors(
@@ -179,15 +271,15 @@ fun SavedScreen(
               )
               Spacer(modifier = Modifier.height(14.dp))
               Text(
-                text = "Abhi tak koi outlier save nahi kiya",
+                text = appStrings.savedEmptyTitle,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.White,
+                color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center
               )
               Spacer(modifier = Modifier.height(6.dp))
               Text(
-                text = "Results me kisi bhi card pe 💾 dabake yaha bookmark kar sakte hain.",
+                text = appStrings.savedEmptySubtitle,
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
@@ -200,18 +292,64 @@ fun SavedScreen(
           items = filteredList,
           key = { it.videoId }
         ) { video ->
-          OutlierCard(
-            video = video,
-            onOpenClick = { vid ->
-              val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/shorts/$vid"))
-              context.startActivity(intent)
-            },
-            onSaveToggle = { onRemove(video.videoId) },
-            onCopyClick = { _, content ->
-              Toast.makeText(context, "Copied: $content", Toast.LENGTH_SHORT).show()
-            },
-            onAiClick = onAiClick
-          )
+          val dismissState = rememberSwipeToDismissBoxState()
+
+          LaunchedEffect(dismissState.currentValue) {
+            if (dismissState.currentValue == SwipeToDismissBoxValue.EndToStart ||
+              dismissState.currentValue == SwipeToDismissBoxValue.StartToEnd
+            ) {
+              onRemove(video.videoId)
+            }
+          }
+
+          SwipeToDismissBox(
+            state = dismissState,
+            modifier = Modifier.animateItem(),
+            backgroundContent = {
+              val bgColor by animateColorAsState(
+                targetValue = if (dismissState.targetValue == SwipeToDismissBoxValue.Settled) {
+                  MaterialTheme.colorScheme.surfaceVariant
+                } else {
+                  AccentRed.copy(alpha = 0.85f)
+                },
+                label = "swipe_bg"
+              )
+              Box(
+                modifier = Modifier
+                  .fillMaxSize()
+                  .clip(RoundedCornerShape(20.dp))
+                  .background(bgColor)
+                  .padding(horizontal = 24.dp),
+                contentAlignment = Alignment.CenterEnd
+              ) {
+                Icon(
+                  imageVector = Icons.Default.Delete,
+                  contentDescription = "Remove saved item",
+                  tint = Color.White,
+                  modifier = Modifier.size(28.dp)
+                )
+              }
+            }
+          ) {
+            OutlierCard(
+              video = video,
+              onOpenClick = { vid ->
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/shorts/$vid"))
+                try {
+                  context.startActivity(intent)
+                } catch (_: Exception) {
+                  Toast.makeText(context, "Unable to open link", Toast.LENGTH_SHORT).show()
+                }
+              },
+              onSaveToggle = { onRemove(video.videoId) },
+              onCopyClick = { label, content ->
+                val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText(label, content))
+                Toast.makeText(context, "✓ $label copied", Toast.LENGTH_SHORT).show()
+              },
+              onAiClick = onAiClick
+            )
+          }
         }
       }
 

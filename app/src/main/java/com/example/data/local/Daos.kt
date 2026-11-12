@@ -80,3 +80,15 @@ interface SavedOutlierDao {
   @Query("DELETE FROM saved_outliers")
   suspend fun clearAll()
 }
+
+@Dao
+interface AiCacheDao {
+  @Query("SELECT * FROM ai_cache WHERE cacheKey = :cacheKey")
+  suspend fun getAiCache(cacheKey: String): AiCacheEntity?
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun insertAiCache(entity: AiCacheEntity)
+
+  @Query("DELETE FROM ai_cache")
+  suspend fun clearAiCache()
+}

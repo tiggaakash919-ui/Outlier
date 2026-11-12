@@ -32,6 +32,19 @@ class KeyRepository(
     return null
   }
 
+  private fun stripKey(message: String, key: String): String {
+    if (key.isBlank()) return message
+    return message.replace(key, "[REDACTED]")
+  }
+
+  suspend fun testSavedKey(): KeyValidationResult = withContext(Dispatchers.IO) {
+    val savedKey = settingsStore.getDecryptedApiKey()
+    if (savedKey.isNullOrBlank()) {
+      return@withContext KeyValidationResult.Error("Koi API key save nahi hai")
+    }
+    return@withContext testAndSaveKey(savedKey)
+  }
+
   suspend fun testAndSaveKey(rawKey: String): KeyValidationResult = withContext(Dispatchers.IO) {
     val trimmed = rawKey.trim()
     val formatError = validateFormat(trimmed)
@@ -40,7 +53,7 @@ class KeyRepository(
     }
 
     try {
-      // 1 unit test call
+      // 1 unit test call: channels.list?part=id&id=UC_x5XG1OV2P6uZZ5FSM9Ttw
       val response = youTubeApi.getChannels(
         part = "id",
         ids = "UC_x5XG1OV2P6uZZ5FSM9Ttw",
@@ -62,7 +75,7 @@ class KeyRepository(
       }
 
       val reason = errorEnvelope?.error?.errors?.firstOrNull()?.reason ?: ""
-      val message = errorEnvelope?.error?.message ?: ""
+      val message = stripKey(errorEnvelope?.error?.message ?: "", trimmed)
 
       when {
         response.code() == 400 || reason == "keyInvalid" || message.contains("API key not valid", ignoreCase = true) -> {
@@ -81,7 +94,7 @@ class KeyRepository(
         }
         else -> {
           val fallbackMsg = if (reason.isNotBlank()) "API error: $reason" else "HTTP ${response.code()}"
-          KeyValidationResult.Error(fallbackMsg)
+          KeyValidationResult.Error(stripKey(fallbackMsg, trimmed))
         }
       }
     } catch (e: UnknownHostException) {
@@ -89,7 +102,8 @@ class KeyRepository(
     } catch (e: IOException) {
       KeyValidationResult.Error("Internet check karo")
     } catch (e: Exception) {
-      KeyValidationResult.Error("Verification failed: ${e.message ?: "Unknown error"}")
+      val safeMsg = stripKey(e.message ?: "Unknown error", trimmed)
+      KeyValidationResult.Error("Verification failed: $safeMsg")
     }
   }
 

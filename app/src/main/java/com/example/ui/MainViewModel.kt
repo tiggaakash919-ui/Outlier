@@ -5,11 +5,14 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.AppDatabase
 import com.example.data.local.SettingsStore
+import com.example.data.repository.AiRepository
+import com.example.data.repository.AiResult
 import com.example.data.repository.KeyRepository
 import com.example.data.repository.OutlierRepository
 import com.example.data.repository.QuotaTracker
 import com.example.data.repository.SavedRepository
 import com.example.data.repository.SearchResult
+import com.example.domain.AiUiState
 import com.example.domain.DebugStats
 import com.example.domain.FilterOptions
 import com.example.domain.OutlierVideo
@@ -37,6 +40,7 @@ class MainViewModel(
   private val keyRepository: KeyRepository,
   private val outlierRepository: OutlierRepository,
   private val savedRepository: SavedRepository,
+  private val aiRepository: AiRepository,
   private val quotaTracker: QuotaTracker,
   private val settingsStore: SettingsStore,
   private val database: AppDatabase
@@ -52,7 +56,7 @@ class MainViewModel(
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
   val geminiModel: StateFlow<String> = settingsStore.geminiModel
-    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "gemini-2.5-flash")
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "gemini-3.8-flash")
 
   val aiLanguage: StateFlow<String> = settingsStore.aiLanguage
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "Hinglish")
@@ -65,6 +69,9 @@ class MainViewModel(
 
   private val _maskedKey = MutableStateFlow<String?>(null)
   val maskedKey: StateFlow<String?> = _maskedKey.asStateFlow()
+
+  private val _onboardingError = MutableStateFlow<String?>(null)
+  val onboardingError: StateFlow<String?> = _onboardingError.asStateFlow()
 
   private val _currentScreen = MutableStateFlow(Screen.HOME)
   val currentScreen: StateFlow<Screen> = _currentScreen.asStateFlow()
@@ -91,6 +98,9 @@ class MainViewModel(
   )
   val recentSearches: StateFlow<List<String>> = _recentSearches.asStateFlow()
 
+  private val _aiUiState = MutableStateFlow<AiUiState>(AiUiState.Idle)
+  val aiUiState: StateFlow<AiUiState> = _aiUiState.asStateFlow()
+
   private val _userMessages = MutableSharedFlow<String>()
   val userMessages: SharedFlow<String> = _userMessages.asSharedFlow()
 
@@ -102,6 +112,10 @@ class MainViewModel(
     viewModelScope.launch {
       _maskedKey.value = keyRepository.getMaskedKey()
     }
+  }
+
+  fun clearOnboardingError() {
+    _onboardingError.value = null
   }
 
   fun navigateTo(screen: Screen) {
@@ -136,6 +150,7 @@ class MainViewModel(
           _isSearching.value = false
           _userMessages.emit(result.message)
           if (result.isKeyInvalid) {
+            _onboardingError.value = "Key kaam nahi kar rahi, nayi key daalo"
             refreshMaskedKey()
           }
         }
@@ -161,13 +176,16 @@ class MainViewModel(
         is SearchResult.Error -> {
           _isSearching.value = false
           _userMessages.emit(result.message)
+          if (result.isKeyInvalid) {
+            _onboardingError.value = "Key kaam nahi kar rahi, nayi key daalo"
+            refreshMaskedKey()
+          }
         }
       }
     }
   }
 
   fun tryMore(variantOrSlice: String) {
-    // Check if it's a recency slice
     val isSlice = variantOrSlice in listOf("7d", "30d", "90d", "6mo")
     val updatedFilters = if (isSlice) {
       _filters.value.copy(recency = variantOrSlice)
@@ -175,7 +193,27 @@ class MainViewModel(
       _filters.value.copy(keyword = variantOrSlice)
     }
     _filters.value = updatedFilters
-    startSearch(forceRefresh = true)
+
+    _isSearching.value = true
+    viewModelScope.launch {
+      when (val result = outlierRepository.searchOutliers(updatedFilters, forceRefresh = false)) {
+        is SearchResult.Success -> {
+          // Merge the new results and deduplicate by videoId (Section 4)
+          val existingMap = _outliers.value.associateBy { it.videoId }.toMutableMap()
+          result.outliers.forEach { newVid ->
+            existingMap[newVid.videoId] = newVid
+          }
+          _outliers.value = existingMap.values.toList()
+          _debugStats.value = result.debugStats
+          _nextPageToken.value = result.nextPageToken
+          _isSearching.value = false
+        }
+        is SearchResult.Error -> {
+          _isSearching.value = false
+          _userMessages.emit(result.message)
+        }
+      }
+    }
   }
 
   fun loosenFilters() {
@@ -200,6 +238,25 @@ class MainViewModel(
         if (it.videoId == videoId) it.copy(isSaved = false) else it
       }
     }
+  }
+
+  fun analyzeWithAi(video: OutlierVideo, forceRefresh: Boolean = false) {
+    _aiUiState.value = AiUiState.Loading
+    viewModelScope.launch {
+      val lang = aiLanguage.value
+      when (val res = aiRepository.analyzeOutlier(video, lang, forceRefresh = forceRefresh)) {
+        is AiResult.Success -> {
+          _aiUiState.value = AiUiState.Success(res.analysis, isCached = res.isCached)
+        }
+        is AiResult.Error -> {
+          _aiUiState.value = AiUiState.Error(res.message)
+        }
+      }
+    }
+  }
+
+  fun resetAiState() {
+    _aiUiState.value = AiUiState.Idle
   }
 
   fun setGeminiModel(model: String) {
@@ -231,6 +288,7 @@ class MainViewModel(
       database.searchCacheDao().clearSearchCache()
       database.channelCacheDao().clearChannelCache()
       database.shortVerificationDao().clearShortVerificationCache()
+      database.aiCacheDao().clearAiCache()
     }
   }
 
@@ -247,6 +305,7 @@ class MainViewModel(
     private val keyRepository: KeyRepository,
     private val outlierRepository: OutlierRepository,
     private val savedRepository: SavedRepository,
+    private val aiRepository: AiRepository,
     private val quotaTracker: QuotaTracker,
     private val settingsStore: SettingsStore,
     private val database: AppDatabase
@@ -257,6 +316,7 @@ class MainViewModel(
         keyRepository,
         outlierRepository,
         savedRepository,
+        aiRepository,
         quotaTracker,
         settingsStore,
         database

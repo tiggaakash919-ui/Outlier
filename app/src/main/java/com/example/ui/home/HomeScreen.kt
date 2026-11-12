@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -68,6 +69,7 @@ import com.example.domain.Presets
 import com.example.domain.QuotaStatus
 import com.example.ui.components.QuotaBadge
 import com.example.ui.theme.AccentRed
+import com.example.ui.theme.LocalAppStrings
 import com.example.ui.theme.PrimaryViolet
 import com.example.ui.theme.SecondaryCyan
 
@@ -83,9 +85,11 @@ fun HomeScreen(
   onSearchClick: () -> Unit,
   modifier: Modifier = Modifier
 ) {
+  val appStrings = LocalAppStrings.current
   var showAdvancedFilters by remember { mutableStateOf(false) }
 
   val nicheSuggestions = listOf("Tech", "Finance", "Motivation", "Facts", "Comedy", "Gaming", "Cooking")
+  val isQuotaBlocked = quotaStatus.isSearchExceeded || quotaStatus.isMainExceeded
 
   Column(
     modifier = modifier
@@ -105,7 +109,7 @@ fun HomeScreen(
           text = "Outlier Radar",
           fontSize = 24.sp,
           fontWeight = FontWeight.Bold,
-          color = Color.White
+          color = MaterialTheme.colorScheme.onBackground
         )
         Text(
           text = "Viral Shorts Discovery",
@@ -116,13 +120,44 @@ fun HomeScreen(
       QuotaBadge(quotaStatus = quotaStatus)
     }
 
+    // Quota Exceeded Banner (Section 3)
+    if (isQuotaBlocked) {
+      Spacer(modifier = Modifier.height(14.dp))
+      Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = AccentRed.copy(alpha = 0.16f)),
+        modifier = Modifier
+          .fillMaxWidth()
+          .testTag("quota_exceeded_banner")
+      ) {
+        Row(
+          modifier = Modifier.padding(12.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Icon(
+            imageVector = Icons.Default.Warning,
+            contentDescription = null,
+            tint = AccentRed,
+            modifier = Modifier.size(22.dp)
+          )
+          Spacer(modifier = Modifier.width(10.dp))
+          Text(
+            text = "Aaj ka YouTube API quota khatam ho gaya hai. Quota resets at ${quotaStatus.resetTimeLocal}.",
+            fontSize = 13.sp,
+            color = AccentRed,
+            fontWeight = FontWeight.SemiBold
+          )
+        }
+      }
+    }
+
     Spacer(modifier = Modifier.height(18.dp))
 
     // Search Input Field
     OutlinedTextField(
       value = filters.keyword,
       onValueChange = { onFiltersChange(filters.copy(keyword = it)) },
-      label = { Text("Niche ya keyword daalo (e.g. motivation, cooking)") },
+      label = { Text(appStrings.searchFieldLabel) },
       placeholder = { Text("Keywords...") },
       singleLine = true,
       leadingIcon = {
@@ -140,7 +175,13 @@ fun HomeScreen(
         }
       },
       keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-      keyboardActions = KeyboardActions(onSearch = { if (filters.keyword.isNotBlank() && !isSearching) onSearchClick() }),
+      keyboardActions = KeyboardActions(
+        onSearch = {
+          if (filters.keyword.isNotBlank() && !isSearching && !isQuotaBlocked) {
+            onSearchClick()
+          }
+        }
+      ),
       shape = RoundedCornerShape(16.dp),
       colors = OutlinedTextFieldDefaults.colors(
         focusedContainerColor = MaterialTheme.colorScheme.surface,
@@ -169,7 +210,7 @@ fun HomeScreen(
           label = { Text(niche, fontSize = 12.sp) },
           colors = FilterChipDefaults.filterChipColors(
             selectedContainerColor = PrimaryViolet.copy(alpha = 0.25f),
-            selectedLabelColor = Color.White
+            selectedLabelColor = MaterialTheme.colorScheme.onSurface
           ),
           modifier = Modifier.testTag("chip_niche_$niche")
         )
@@ -180,7 +221,7 @@ fun HomeScreen(
 
     // Presets Row
     Text(
-      text = "Preset Strategies",
+      text = appStrings.presetStrategies,
       fontSize = 13.sp,
       fontWeight = FontWeight.SemiBold,
       color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -191,20 +232,20 @@ fun HomeScreen(
       horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
       PresetChip(
-        title = "🎯 Tiny gems",
-        subtitle = "≤1K subs, 100x",
+        title = "🎯 Tiny channel gems",
+        subtitle = "≤1K subs, ≤2K med, 100x",
         onClick = { onFiltersChange(Presets.applyPreset(PresetType.TINY_GEMS, filters.keyword)) },
         modifier = Modifier.weight(1f)
       )
       PresetChip(
         title = "⚖️ Balanced",
-        subtitle = "≤10K subs, 50x",
+        subtitle = "≤10K subs, ≤5K med, 50x",
         onClick = { onFiltersChange(Presets.applyPreset(PresetType.BALANCED, filters.keyword)) },
         modifier = Modifier.weight(1f)
       )
       PresetChip(
         title = "🌊 Loose",
-        subtitle = "≤100K subs, 20x",
+        subtitle = "≤100K subs, 100K+, 20x",
         onClick = { onFiltersChange(Presets.applyPreset(PresetType.LOOSE, filters.keyword)) },
         modifier = Modifier.weight(1f)
       )
@@ -237,10 +278,10 @@ fun HomeScreen(
           )
           Spacer(modifier = Modifier.width(8.dp))
           Text(
-            text = "Advanced Filters",
+            text = appStrings.advancedFilters,
             fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,
-            color = Color.White
+            color = MaterialTheme.colorScheme.onSurface
           )
           Spacer(modifier = Modifier.weight(1f))
           Icon(
@@ -298,6 +339,25 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
+            // Max Median Views (default 5,000)
+            Text(
+              text = "Max Channel Median Views: ${OutlierCalculator.formatCompactNumber(filters.maxMedianViews)}",
+              fontSize = 13.sp,
+              color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              listOf(1_000L to "1K", 2_000L to "2K", 5_000L to "5K", 10_000L to "10K", 25_000L to "25K").forEach { (med, label) ->
+                ElevatedFilterChip(
+                  selected = filters.maxMedianViews == med,
+                  onClick = { onFiltersChange(filters.copy(maxMedianViews = med)) },
+                  label = { Text(label, fontSize = 12.sp) }
+                )
+              }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
             // Min Multiplier [20x, 50x, 100x, 500x]
             Text(
               text = "Min Outlier Multiplier: ${filters.minMultiplier}x",
@@ -311,6 +371,25 @@ fun HomeScreen(
                   selected = filters.minMultiplier == mul,
                   onClick = { onFiltersChange(filters.copy(minMultiplier = mul)) },
                   label = { Text("${mul}x", fontSize = 12.sp) }
+                )
+              }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Sample per channel [20, 50] (default 50)
+            Text(
+              text = "Sample Shorts per Channel: ${filters.samplePerChannel}",
+              fontSize = 13.sp,
+              color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              listOf(20, 50).forEach { smp ->
+                ElevatedFilterChip(
+                  selected = filters.samplePerChannel == smp,
+                  onClick = { onFiltersChange(filters.copy(samplePerChannel = smp)) },
+                  label = { Text("$smp Shorts", fontSize = 12.sp) }
                 )
               }
             }
@@ -411,7 +490,7 @@ fun HomeScreen(
     // Find Outliers 🔥 Button
     Button(
       onClick = { onSearchClick() },
-      enabled = filters.keyword.isNotBlank() && !isSearching,
+      enabled = filters.keyword.isNotBlank() && !isSearching && !isQuotaBlocked,
       shape = RoundedCornerShape(24.dp),
       colors = ButtonDefaults.buttonColors(
         containerColor = AccentRed,
@@ -430,7 +509,7 @@ fun HomeScreen(
         )
       } else {
         Text(
-          text = "Find Outliers 🔥",
+          text = appStrings.findOutliersBtn,
           fontSize = 17.sp,
           fontWeight = FontWeight.Bold,
           color = Color.White
@@ -469,7 +548,7 @@ fun HomeScreen(
     if (recentSearches.isNotEmpty()) {
       Spacer(modifier = Modifier.height(24.dp))
       Text(
-        text = "Recent Searches",
+        text = appStrings.recentSearches,
         fontSize = 13.sp,
         fontWeight = FontWeight.SemiBold,
         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -480,7 +559,7 @@ fun HomeScreen(
           SuggestionChip(
             onClick = {
               onFiltersChange(filters.copy(keyword = query))
-              onSearchClick()
+              if (!isQuotaBlocked) onSearchClick()
             },
             label = { Text(query, fontSize = 12.sp) },
             icon = {
@@ -516,20 +595,22 @@ private fun PresetChip(
     )
   ) {
     Column(
-      modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+      modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
       horizontalAlignment = Alignment.CenterHorizontally
     ) {
       Text(
         text = title,
-        fontSize = 12.sp,
+        fontSize = 11.sp,
         fontWeight = FontWeight.Bold,
-        color = Color.White
+        color = MaterialTheme.colorScheme.onSurface,
+        maxLines = 1
       )
       Spacer(modifier = Modifier.height(2.dp))
       Text(
         text = subtitle,
-        fontSize = 10.sp,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
+        fontSize = 9.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1
       )
     }
   }

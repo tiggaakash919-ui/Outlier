@@ -11,9 +11,10 @@ import androidx.room.RoomDatabase
     SearchCacheEntity::class,
     ChannelCacheEntity::class,
     ShortVerificationCacheEntity::class,
-    SavedOutlierEntity::class
+    SavedOutlierEntity::class,
+    AiCacheEntity::class
   ],
-  version = 1,
+  version = 2,
   exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -22,6 +23,7 @@ abstract class AppDatabase : RoomDatabase() {
   abstract fun channelCacheDao(): ChannelCacheDao
   abstract fun shortVerificationDao(): ShortVerificationDao
   abstract fun savedOutlierDao(): SavedOutlierDao
+  abstract fun aiCacheDao(): AiCacheDao
 
   companion object {
     @Volatile
@@ -34,7 +36,7 @@ abstract class AppDatabase : RoomDatabase() {
           AppDatabase::class.java,
           "outlier_radar_database"
         )
-          .fallbackToDestructiveMigration()
+          .fallbackToDestructiveMigration(true)
           .build()
         INSTANCE = instance
         instance

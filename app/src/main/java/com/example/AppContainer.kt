@@ -1,11 +1,13 @@
 package com.example
 
 import android.content.Context
+import android.util.Log
 import com.example.data.local.AppDatabase
 import com.example.data.local.KeyVault
 import com.example.data.local.SettingsStore
 import com.example.data.remote.ShortsVerifier
 import com.example.data.remote.YouTubeApi
+import com.example.data.repository.AiRepository
 import com.example.data.repository.KeyRepository
 import com.example.data.repository.OutlierRepository
 import com.example.data.repository.QuotaTracker
@@ -33,7 +35,14 @@ class AppContainer(private val context: Context) {
   }
 
   private val okHttpClient: OkHttpClient by lazy {
-    val logging = HttpLoggingInterceptor().apply {
+    val keyRedactRegex = Regex("key=[^&\\s]+")
+    val safeLogger = HttpLoggingInterceptor.Logger { message ->
+      if (BuildConfig.DEBUG) {
+        val redacted = keyRedactRegex.replace(message, "key=REDACTED")
+        Log.d("OutlierHttp", redacted)
+      }
+    }
+    val logging = HttpLoggingInterceptor(safeLogger).apply {
       level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BASIC else HttpLoggingInterceptor.Level.NONE
     }
     OkHttpClient.Builder()
@@ -86,5 +95,12 @@ class AppContainer(private val context: Context) {
 
   val savedRepository: SavedRepository by lazy {
     SavedRepository(database)
+  }
+
+  val aiRepository: AiRepository by lazy {
+    AiRepository(
+      database = database,
+      settingsStore = settingsStore
+    )
   }
 }

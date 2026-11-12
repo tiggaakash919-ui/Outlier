@@ -1,9 +1,12 @@
 package com.example
 
+import com.example.data.repository.SavedRepository
 import com.example.domain.BadgeTier
 import com.example.domain.DurationParser
 import com.example.domain.MedianCalculator
 import com.example.domain.OutlierCalculator
+import com.example.domain.OutlierVideo
+import com.example.domain.ShortStatus
 import com.example.domain.UushHelper
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -82,5 +85,48 @@ class OutlierHunterUnitTests {
     val pacificZone = ZoneId.of("America/Los_Angeles")
     val dateStr = LocalDate.now(pacificZone).toString()
     assertTrue(dateStr.matches(Regex("\\d{4}-\\d{2}-\\d{2}")))
+  }
+
+  @Test
+  fun testCsvExportUtf8WithBomAndHindiText() {
+    val sampleVideo = OutlierVideo(
+      videoId = "abc123xyz",
+      title = "सफलता का रहस्य | Motivation Short 🔥",
+      description = "Hindi motivation short",
+      tags = listOf("motivation", "हिंदी"),
+      thumbnailUrl = "https://i.ytimg.com/vi/abc123xyz/hqdefault.jpg",
+      channelId = "UC_test_channel",
+      channelTitle = "मोटिवेशनल चैनल",
+      subscriberCount = 500L,
+      hiddenSubscriberCount = false,
+      views = 1_200_000L,
+      channelMedianViews = 1_000L,
+      outlierMultiplier = 1200,
+      viewsPerSub = 2400.0,
+      likes = 85_000L,
+      comments = 1_200L,
+      durationSeconds = 45L,
+      publishedAt = "2026-10-15T10:00:00Z",
+      shortStatus = ShortStatus.CONFIRMED_SHORT,
+      isSaved = true,
+      savedAt = 1760000000000L
+    )
+
+    val csvBytes = SavedRepository.generateCsvBytesWithBom(listOf(sampleVideo))
+
+    // Verify 3-byte UTF-8 BOM (EF BB BF)
+    assertEquals(0xEF.toByte(), csvBytes[0])
+    assertEquals(0xBB.toByte(), csvBytes[1])
+    assertEquals(0xBF.toByte(), csvBytes[2])
+
+    val contentWithoutBom = String(csvBytes.drop(3).toByteArray(), Charsets.UTF_8)
+    assertTrue(
+      contentWithoutBom.startsWith(
+        "Title,Channel,ChannelURL,Subs,Views,Median,Multiplier,ViewsPerSub,Likes,Comments,Duration,UploadDate,Tags,ShortStatus,VideoURL,SavedAt"
+      )
+    )
+    assertTrue(contentWithoutBom.contains("सफलता का रहस्य"))
+    assertTrue(contentWithoutBom.contains("मोटिवेशनल चैनल"))
+    assertTrue(contentWithoutBom.contains("1200x"))
   }
 }

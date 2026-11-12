@@ -6,6 +6,10 @@ import com.example.domain.OutlierVideo
 import com.example.domain.ShortStatus
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 class SavedRepository(
   private val database: AppDatabase
@@ -14,6 +18,11 @@ class SavedRepository(
 
   val savedOutliersFlow: Flow<List<OutlierVideo>> = savedDao.getAllSaved().map { list ->
     list.map { entity ->
+      val parsedStatus = try {
+        ShortStatus.valueOf(entity.shortStatus)
+      } catch (_: Exception) {
+        if (entity.isShort) ShortStatus.CONFIRMED_SHORT else ShortStatus.NOT_A_SHORT
+      }
       OutlierVideo(
         videoId = entity.videoId,
         title = entity.title,
@@ -32,8 +41,9 @@ class SavedRepository(
         comments = entity.comments,
         durationSeconds = entity.durationSeconds,
         publishedAt = entity.publishedAt,
-        shortStatus = if (entity.isShort) ShortStatus.CONFIRMED_SHORT else ShortStatus.NOT_A_SHORT,
-        isSaved = true
+        shortStatus = parsedStatus,
+        isSaved = true,
+        savedAt = entity.savedAt
       )
     }
   }
@@ -44,6 +54,7 @@ class SavedRepository(
       savedDao.deleteSaved(video.videoId)
       return false
     } else {
+      val now = System.currentTimeMillis()
       savedDao.saveOutlier(
         SavedOutlierEntity(
           videoId = video.videoId,
@@ -63,7 +74,8 @@ class SavedRepository(
           thumbnailUrl = video.thumbnailUrl,
           description = video.description,
           isShort = video.shortStatus == ShortStatus.CONFIRMED_SHORT,
-          savedAt = System.currentTimeMillis()
+          shortStatus = video.shortStatus.name,
+          savedAt = now
         )
       )
       return true
@@ -76,5 +88,70 @@ class SavedRepository(
 
   suspend fun clearAll() {
     savedDao.clearAll()
+  }
+
+  companion object {
+    private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+      .withZone(ZoneId.systemDefault())
+
+    private fun escapeCsv(value: String): String {
+      val escaped = value.replace("\"", "\"\"")
+      return "\"$escaped\""
+    }
+
+    /**
+     * Generates UTF-8 CSV with 3-byte UTF-8 BOM (EF BB BF) so Excel renders Hindi/Hinglish text intact.
+     * Columns: Title, Channel, ChannelURL, Subs, Views, Median, Multiplier, ViewsPerSub,
+     * Likes, Comments, Duration, UploadDate, Tags, ShortStatus, VideoURL, SavedAt.
+     */
+    fun generateCsvBytesWithBom(items: List<OutlierVideo>): ByteArray {
+      val sb = StringBuilder()
+      sb.append(
+        "Title,Channel,ChannelURL,Subs,Views,Median,Multiplier,ViewsPerSub,Likes,Comments,Duration,UploadDate,Tags,ShortStatus,VideoURL,SavedAt\r\n"
+      )
+
+      for (item in items) {
+        val channelUrl = "https://www.youtube.com/channel/${item.channelId}"
+        val videoUrl = "https://www.youtube.com/shorts/${item.videoId}"
+        val viewsPerSubStr = String.format(Locale.US, "%.2f", item.viewsPerSub)
+        val uploadDate = if (item.publishedAt.length >= 10) item.publishedAt.substring(0, 10) else item.publishedAt
+        val tagsJoined = item.tags.joinToString("; ")
+        val shortStatusStr = when (item.shortStatus) {
+          ShortStatus.CONFIRMED_SHORT -> "Short"
+          ShortStatus.NOT_A_SHORT -> "Not a Short"
+          ShortStatus.UNVERIFIED -> "Unverified"
+        }
+        val savedAtStr = if (item.savedAt > 0) {
+          dateFormatter.format(Instant.ofEpochMilli(item.savedAt))
+        } else {
+          dateFormatter.format(Instant.now())
+        }
+
+        val row = listOf(
+          escapeCsv(item.title),
+          escapeCsv(item.channelTitle),
+          escapeCsv(channelUrl),
+          item.subscriberCount.toString(),
+          item.views.toString(),
+          item.channelMedianViews.toString(),
+          "${item.outlierMultiplier}x",
+          viewsPerSubStr,
+          item.likes.toString(),
+          item.comments.toString(),
+          "${item.durationSeconds}s",
+          escapeCsv(uploadDate),
+          escapeCsv(tagsJoined),
+          escapeCsv(shortStatusStr),
+          escapeCsv(videoUrl),
+          escapeCsv(savedAtStr)
+        ).joinToString(",")
+
+        sb.append(row).append("\r\n")
+      }
+
+      val csvBytes = sb.toString().toByteArray(Charsets.UTF_8)
+      val bom = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())
+      return bom + csvBytes
+    }
   }
 }

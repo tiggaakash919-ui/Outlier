@@ -28,7 +28,8 @@ class SettingsStore(
   }
 
   val geminiModel: Flow<String> = context.dataStore.data.map { prefs ->
-    prefs[KEY_GEMINI_MODEL] ?: "gemini-2.5-flash"
+    val saved = prefs[KEY_GEMINI_MODEL]
+    if (saved.isNullOrBlank() || saved == "gemini-2.5-flash") "gemini-3.8-flash" else saved
   }
 
   val aiLanguage: Flow<String> = context.dataStore.data.map { prefs ->

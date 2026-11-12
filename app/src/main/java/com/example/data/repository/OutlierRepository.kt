@@ -186,6 +186,7 @@ class OutlierRepository(
       // Step 2: videos.list in chunks of 50
       _progressFlow.value = "Videos ki details fetch ho rahi hain..."
       val validCandidateVideos = mutableListOf<RawVideoCandidate>()
+      var afterDurationCount = 0
 
       val videoChunks = collectedVideoIds.chunked(50)
       for (chunk in videoChunks) {
@@ -209,29 +210,31 @@ class OutlierRepository(
           val views = item.statistics?.viewCount?.toLongOrNull() ?: 0L
           val channelId = item.snippet?.channelId ?: continue
 
-          // Filter: duration <= maxDuration && views >= minViralViews
-          if (durSec <= filters.maxDurationSeconds && views >= filters.minViralViews) {
-            validCandidateVideos.add(
-              RawVideoCandidate(
-                videoId = item.id,
-                title = item.snippet.title ?: "",
-                description = item.snippet.description ?: "",
-                tags = item.snippet.tags ?: emptyList(),
-                thumbnailUrl = item.snippet.thumbnails?.bestUrl() ?: "",
-                channelId = channelId,
-                channelTitle = item.snippet.channelTitle ?: "",
-                views = views,
-                likes = item.statistics?.likeCount?.toLongOrNull() ?: 0L,
-                comments = item.statistics?.commentCount?.toLongOrNull() ?: 0L,
-                durationSeconds = durSec,
-                publishedAt = item.snippet.publishedAt ?: ""
+          if (durSec <= filters.maxDurationSeconds) {
+            afterDurationCount++
+            if (views >= filters.minViralViews) {
+              validCandidateVideos.add(
+                RawVideoCandidate(
+                  videoId = item.id,
+                  title = item.snippet.title ?: "",
+                  description = item.snippet.description ?: "",
+                  tags = item.snippet.tags ?: emptyList(),
+                  thumbnailUrl = item.snippet.thumbnails?.bestUrl() ?: "",
+                  channelId = channelId,
+                  channelTitle = item.snippet.channelTitle ?: "",
+                  views = views,
+                  likes = item.statistics?.likeCount?.toLongOrNull() ?: 0L,
+                  comments = item.statistics?.commentCount?.toLongOrNull() ?: 0L,
+                  durationSeconds = durSec,
+                  publishedAt = item.snippet.publishedAt ?: ""
+                )
               )
-            )
+            }
           }
         }
       }
 
-      val afterDurationAndMinViews = validCandidateVideos.size
+      val afterMinViewsCount = validCandidateVideos.size
       val uniqueChannels = validCandidateVideos.map { it.channelId }.distinct()
 
       // Step 3: channels.list in chunks of 50
@@ -307,6 +310,7 @@ class OutlierRepository(
       var uushCount = 0
       var uploadsFallbackCount = 0
       var channelsPassingMedianCount = 0
+      var channelCacheHits = 0
 
       val channelSemaphore = Semaphore(3)
       var processedChannelsCount = 0
@@ -325,6 +329,7 @@ class OutlierRepository(
               // Check if we already have valid cached median
               if (chInfo?.cachedMedian != null && chInfo.cachedShortCount != null && chInfo.cachedMedian > 0) {
                 synchronized(channelMedianResults) {
+                  channelCacheHits++
                   channelMedianResults[chId] = ChannelMedianResult(
                     median = chInfo.cachedMedian,
                     shortCount = chInfo.cachedShortCount,
@@ -336,18 +341,24 @@ class OutlierRepository(
                   }
                 }
               } else {
-                // S4 a, b, c: fetch median
-                val medianResult = fetchChannelMedian(
-                  channelId = chId,
-                  uploadsPlaylistId = chInfo?.uploadsPlaylistId,
-                  viralVideoIds = viralVideoIdsFromThisChannel,
-                  maxDurationSeconds = filters.maxDurationSeconds,
-                  sampleSize = filters.samplePerChannel,
-                  apiKey = apiKey,
-                  onUnitsUsed = { units ->
-                    perChannelCost += units
-                  }
-                )
+                // S4 a, b, c: fetch median wrapped in try/catch so one channel failing skips it without crashing
+                val medianResult = try {
+                  fetchChannelMedian(
+                    channelId = chId,
+                    uploadsPlaylistId = chInfo?.uploadsPlaylistId,
+                    viralVideoIds = viralVideoIdsFromThisChannel,
+                    maxDurationSeconds = filters.maxDurationSeconds,
+                    sampleSize = filters.samplePerChannel,
+                    apiKey = apiKey,
+                    onUnitsUsed = { units ->
+                      synchronized(this@OutlierRepository) {
+                        perChannelCost += units
+                      }
+                    }
+                  )
+                } catch (_: Exception) {
+                  null
+                }
 
                 if (medianResult != null) {
                   // Cache per channel for 24h
@@ -479,8 +490,8 @@ class OutlierRepository(
       val debugStats = DebugStats(
         searchReturned = searchReturnedCount,
         pages = currentSearchCalls,
-        afterDurationFilter = afterDurationAndMinViews,
-        afterMinViewsFilter = afterDurationAndMinViews,
+        afterDurationFilter = afterDurationCount,
+        afterMinViewsFilter = afterMinViewsCount,
         uniqueChannels = uniqueChannels.size,
         afterSubsFilter = afterSubsFilterCount,
         channelsPassingMedian = channelsPassingMedianCount,
@@ -493,7 +504,7 @@ class OutlierRepository(
         channelsListCost = channelsListCost,
         perChannelCost = perChannelCost,
         mainTotalCost = mainTotalCost,
-        cacheHits = 0
+        cacheHits = channelCacheHits
       )
 
       // Step 7: Save to Room search cache
@@ -517,9 +528,13 @@ class OutlierRepository(
         nextPageToken = finalNextPageToken,
         isCacheHit = false
       )
+    } catch (e: IOException) {
+      _progressFlow.value = null
+      return@withContext SearchResult.Error("Internet check karo")
     } catch (e: Exception) {
       _progressFlow.value = null
-      return@withContext SearchResult.Error(e.message ?: "Search me anjaan khamiyan aayi")
+      val safeMsg = (e.message ?: "Search me anjaan khamiyan aayi").replace(apiKey, "[REDACTED]")
+      return@withContext SearchResult.Error(safeMsg)
     }
   }
 
@@ -625,11 +640,11 @@ class OutlierRepository(
   }
 
   private suspend fun handleApiError(statusCode: Int, errorBody: String?): SearchResult.Error {
+    if (statusCode == 400 || errorBody?.contains("keyInvalid", ignoreCase = true) == true) {
+      settingsStore.clearApiKey()
+      return SearchResult.Error("Key kaam nahi kar rahi, nayi key daalo", isKeyInvalid = true)
+    }
     return when (statusCode) {
-      400 -> {
-        settingsStore.clearApiKey()
-        SearchResult.Error("YouTube API key galat hai, dobara check karo", isKeyInvalid = true)
-      }
       403 -> {
         if (errorBody?.contains("quotaExceeded", ignoreCase = true) == true) {
           quotaTracker.markSearchExceeded()

@@ -1,70 +1,121 @@
 package com.example
 
+import android.content.Context
+import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.TrendingUp
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
 import com.example.domain.OutlierVideo
 import com.example.ui.MainViewModel
 import com.example.ui.Screen
+import com.example.ui.components.AiBottomSheet
 import com.example.ui.home.HomeScreen
 import com.example.ui.onboarding.OnboardingScreen
 import com.example.ui.results.ResultsScreen
 import com.example.ui.saved.SavedScreen
 import com.example.ui.settings.SettingsScreen
+import com.example.ui.theme.LocalAppStrings
 import com.example.ui.theme.OutlierRadarTheme
 import com.example.ui.theme.PrimaryViolet
-import com.example.ui.theme.SecondaryCyan
+import com.example.ui.theme.rememberAppStrings
+import com.google.firebase.FirebaseApp
+import com.google.firebase.appcheck.FirebaseAppCheck
+import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
+import com.google.firebase.appcheck.recaptcha.RecaptchaAppCheckProviderFactory
+
+private const val TAG = "AppCheckInit"
+
+private const val DEBUG_TOKEN_EXTRA = "FIREBASE_APPCHECK_DEBUG_TOKEN"
+private const val DEBUG_STORE_PREFIX = "com.google.firebase.appcheck.debug.store."
+private const val DEBUG_SECRET_KEY = "com.google.firebase.appcheck.debug.DEBUG_SECRET"
+private const val RECAPTCHA_SITE_KEY_RES = "recaptcha_site_key"
+
+fun configureAppCheck(context: Context, intent: Intent?) {
+  try {
+    if (FirebaseApp.getApps(context).isEmpty()) {
+      FirebaseApp.initializeApp(context)
+    }
+
+    if (BuildConfig.DEBUG) {
+      val debugToken = intent?.getStringExtra(DEBUG_TOKEN_EXTRA)
+
+      if (!debugToken.isNullOrEmpty()) {
+        val persistenceKey = FirebaseApp.getInstance().persistenceKey
+        val prefs = context.getSharedPreferences(
+          "$DEBUG_STORE_PREFIX$persistenceKey",
+          Context.MODE_PRIVATE
+        )
+        // Synchronous commit() is required before DebugAppCheckProviderFactory reads it
+        prefs.edit()
+          .putString(DEBUG_SECRET_KEY, debugToken)
+          .commit()
+        Log.d(TAG, "App Check debug secret configured successfully.")
+      } else {
+        Log.w(TAG, "No debug token found in Intent extra.")
+      }
+
+      FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
+        DebugAppCheckProviderFactory.getInstance()
+      )
+      Log.d(TAG, "DebugAppCheckProviderFactory installed.")
+    } else {
+      val resId = context.resources.getIdentifier(RECAPTCHA_SITE_KEY_RES, "string", context.packageName)
+      if (resId != 0) {
+        val siteKey = context.getString(resId)
+        if (siteKey.isNotBlank()) {
+          FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
+            RecaptchaAppCheckProviderFactory.getInstance(siteKey)
+          )
+          Log.d(TAG, "RecaptchaAppCheckProviderFactory installed.")
+        } else {
+          Log.e(TAG, "recaptcha_site_key resource string is blank.")
+        }
+      } else {
+        Log.e(TAG, "recaptcha_site_key string resource not found in package.")
+      }
+    }
+  } catch (e: Exception) {
+    Log.e(TAG, "Failed to initialize Firebase App Check", e)
+  }
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -75,51 +126,82 @@ class MainActivity : ComponentActivity() {
       keyRepository = appContainer.keyRepository,
       outlierRepository = appContainer.outlierRepository,
       savedRepository = appContainer.savedRepository,
+      aiRepository = appContainer.aiRepository,
       quotaTracker = appContainer.quotaTracker,
       settingsStore = appContainer.settingsStore,
       database = appContainer.database
     )
   }
 
-  @OptIn(ExperimentalMaterial3Api::class)
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+
+    // STEP 1: Configure App Check with launch intent before any UI, ViewModels, or Firebase calls
+    configureAppCheck(this, intent)
+
     enableEdgeToEdge()
 
+    // STEP 2: Initialize Compose UI
     setContent {
       val hasApiKey by viewModel.hasApiKey.collectAsStateWithLifecycle()
       val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
-      val isDark = themeMode == "DARK"
+      val uiLanguage by viewModel.uiLanguage.collectAsStateWithLifecycle()
+      val onboardingError by viewModel.onboardingError.collectAsStateWithLifecycle()
 
-      OutlierRadarTheme(darkTheme = isDark) {
-        val context = LocalContext.current
+      val systemDark = isSystemInDarkTheme()
+      val isDark = when (themeMode.uppercase()) {
+        "LIGHT" -> false
+        "SYSTEM" -> systemDark
+        else -> true // Dark default
+      }
 
-        // Listen for user messages / alerts
-        LaunchedEffect(Unit) {
-          viewModel.userMessages.collect { msg ->
-            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-          }
-        }
+      val appStrings = rememberAppStrings(uiLanguage)
 
-        if (!hasApiKey) {
-          // Onboarding / Key Input screen
-          OnboardingScreen(
-            keyRepository = appContainer.keyRepository,
-            onConnected = {
-              viewModel.refreshMaskedKey()
+      CompositionLocalProvider(LocalAppStrings provides appStrings) {
+        OutlierRadarTheme(darkTheme = isDark) {
+          val context = LocalContext.current
+
+          LaunchedEffect(Unit) {
+            viewModel.userMessages.collect { msg ->
+              Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
             }
-          )
-        } else {
-          MainAppContent(viewModel = viewModel)
+          }
+
+          if (!hasApiKey) {
+            OnboardingScreen(
+              keyRepository = appContainer.keyRepository,
+              initialErrorMessage = onboardingError,
+              onConnected = {
+                viewModel.clearOnboardingError()
+                viewModel.refreshMaskedKey()
+              }
+            )
+          } else {
+            MainAppContent(
+              viewModel = viewModel,
+              keyRepository = appContainer.keyRepository
+            )
+          }
         }
       }
     }
   }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+const val ROUTE_HOME = "home"
+const val ROUTE_RESULTS = "results"
+const val ROUTE_SAVED = "saved"
+const val ROUTE_SETTINGS = "settings"
+
 @Composable
-fun MainAppContent(viewModel: MainViewModel) {
+fun MainAppContent(
+  viewModel: MainViewModel,
+  keyRepository: com.example.data.repository.KeyRepository
+) {
+  val navController = rememberNavController()
+  val navBackStackEntry by navController.currentBackStackEntryAsState()
+  val currentRoute = navBackStackEntry?.destination?.route ?: ROUTE_HOME
+
   val currentScreen by viewModel.currentScreen.collectAsStateWithLifecycle()
   val filters by viewModel.filters.collectAsStateWithLifecycle()
   val quotaStatus by viewModel.quotaStatus.collectAsStateWithLifecycle()
@@ -135,13 +217,42 @@ fun MainAppContent(viewModel: MainViewModel) {
   val aiLanguage by viewModel.aiLanguage.collectAsStateWithLifecycle()
   val uiLanguage by viewModel.uiLanguage.collectAsStateWithLifecycle()
   val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+  val aiUiState by viewModel.aiUiState.collectAsStateWithLifecycle()
 
   var selectedAiVideo by remember { mutableStateOf<OutlierVideo?>(null) }
-  val sheetState = rememberModalBottomSheetState()
 
-  // Handle Android system back press
-  BackHandler(enabled = currentScreen != Screen.HOME) {
+  // Sync ViewModel screen state changes (e.g. when search starts -> RESULTS) with NavController
+  LaunchedEffect(currentScreen) {
+    val targetRoute = when (currentScreen) {
+      Screen.HOME -> ROUTE_HOME
+      Screen.RESULTS -> ROUTE_RESULTS
+      Screen.SAVED -> ROUTE_SAVED
+      Screen.SETTINGS -> ROUTE_SETTINGS
+    }
+    if (currentRoute != targetRoute) {
+      navController.navigate(targetRoute) {
+        popUpTo(navController.graph.findStartDestination().id) {
+          saveState = true
+        }
+        launchSingleTop = true
+        restoreState = true
+      }
+    }
+  }
+
+  BackHandler(enabled = currentRoute != ROUTE_HOME) {
     viewModel.navigateTo(Screen.HOME)
+    navController.navigate(ROUTE_HOME) {
+      popUpTo(navController.graph.findStartDestination().id) {
+        inclusive = false
+      }
+      launchSingleTop = true
+    }
+  }
+
+  fun openAiSheetFor(video: OutlierVideo) {
+    selectedAiVideo = video
+    viewModel.analyzeWithAi(video, forceRefresh = false)
   }
 
   Scaffold(
@@ -153,7 +264,7 @@ fun MainAppContent(viewModel: MainViewModel) {
         NavigationBarItem(
           icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
           label = { Text("Home", fontSize = 11.sp) },
-          selected = currentScreen == Screen.HOME,
+          selected = currentRoute == ROUTE_HOME,
           onClick = { viewModel.navigateTo(Screen.HOME) },
           colors = NavigationBarItemDefaults.colors(
             selectedIconColor = PrimaryViolet,
@@ -165,7 +276,7 @@ fun MainAppContent(viewModel: MainViewModel) {
         NavigationBarItem(
           icon = { Icon(Icons.Default.TrendingUp, contentDescription = "Results") },
           label = { Text("Results", fontSize = 11.sp) },
-          selected = currentScreen == Screen.RESULTS,
+          selected = currentRoute == ROUTE_RESULTS,
           onClick = { viewModel.navigateTo(Screen.RESULTS) },
           colors = NavigationBarItemDefaults.colors(
             selectedIconColor = PrimaryViolet,
@@ -177,7 +288,7 @@ fun MainAppContent(viewModel: MainViewModel) {
         NavigationBarItem(
           icon = { Icon(Icons.Default.Bookmark, contentDescription = "Saved") },
           label = { Text("Saved", fontSize = 11.sp) },
-          selected = currentScreen == Screen.SAVED,
+          selected = currentRoute == ROUTE_SAVED,
           onClick = { viewModel.navigateTo(Screen.SAVED) },
           colors = NavigationBarItemDefaults.colors(
             selectedIconColor = PrimaryViolet,
@@ -189,7 +300,7 @@ fun MainAppContent(viewModel: MainViewModel) {
         NavigationBarItem(
           icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
           label = { Text("Settings", fontSize = 11.sp) },
-          selected = currentScreen == Screen.SETTINGS,
+          selected = currentRoute == ROUTE_SETTINGS,
           onClick = { viewModel.navigateTo(Screen.SETTINGS) },
           colors = NavigationBarItemDefaults.colors(
             selectedIconColor = PrimaryViolet,
@@ -205,8 +316,11 @@ fun MainAppContent(viewModel: MainViewModel) {
         .fillMaxSize()
         .padding(innerPadding)
     ) {
-      when (currentScreen) {
-        Screen.HOME -> {
+      NavHost(
+        navController = navController,
+        startDestination = ROUTE_HOME
+      ) {
+        composable(ROUTE_HOME) {
           HomeScreen(
             filters = filters,
             quotaStatus = quotaStatus,
@@ -214,10 +328,10 @@ fun MainAppContent(viewModel: MainViewModel) {
             progressMessage = progressMessage,
             recentSearches = recentSearches,
             onFiltersChange = { viewModel.updateFilters(it) },
-            onSearchClick = { viewModel.startSearch(forceRefresh = true) }
+            onSearchClick = { viewModel.startSearch(forceRefresh = false) }
           )
         }
-        Screen.RESULTS -> {
+        composable(ROUTE_RESULTS) {
           ResultsScreen(
             outliers = outliers,
             keyword = filters.keyword,
@@ -229,18 +343,17 @@ fun MainAppContent(viewModel: MainViewModel) {
             onTryMore = { viewModel.tryMore(it) },
             onLoosenFilters = { viewModel.loosenFilters() },
             onSaveToggle = { viewModel.toggleSave(it) },
-            onAiClick = { selectedAiVideo = it }
+            onAiClick = { openAiSheetFor(it) }
           )
         }
-        Screen.SAVED -> {
+        composable(ROUTE_SAVED) {
           SavedScreen(
             savedList = savedOutliers,
             onRemove = { viewModel.removeSaved(it) },
-            onAiClick = { selectedAiVideo = it }
+            onAiClick = { openAiSheetFor(it) }
           )
         }
-        Screen.SETTINGS -> {
-          val appContainer = (LocalContext.current.applicationContext as? ComponentActivity)
+        composable(ROUTE_SETTINGS) {
           SettingsScreen(
             maskedKey = maskedKey,
             quotaStatus = quotaStatus,
@@ -248,7 +361,7 @@ fun MainAppContent(viewModel: MainViewModel) {
             aiLanguage = aiLanguage,
             uiLanguage = uiLanguage,
             themeMode = themeMode,
-            keyRepository = MainViewModelHolder.getKeyRepo(LocalContext.current),
+            keyRepository = keyRepository,
             onModelChange = { viewModel.setGeminiModel(it) },
             onAiLanguageChange = { viewModel.setAiLanguage(it) },
             onUiLanguageChange = { viewModel.setUiLanguage(it) },
@@ -261,91 +374,19 @@ fun MainAppContent(viewModel: MainViewModel) {
       }
     }
 
-    // Modal Bottom Sheet placeholder for Phase 2 AI breakdown
-    if (selectedAiVideo != null) {
-      val video = selectedAiVideo!!
-      ModalBottomSheet(
-        onDismissRequest = { selectedAiVideo = null },
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface
-      ) {
-        Column(
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 16.dp)
-        ) {
-          Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-              imageVector = Icons.Default.AutoAwesome,
-              contentDescription = null,
-              tint = PrimaryViolet,
-              modifier = Modifier.size(24.dp)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-              text = "Gemini AI Analysis",
-              fontSize = 18.sp,
-              fontWeight = FontWeight.Bold,
-              color = Color.White
-            )
-          }
-
-          Spacer(modifier = Modifier.height(8.dp))
-
-          Text(
-            text = video.title,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = SecondaryCyan
-          )
-
-          Spacer(modifier = Modifier.height(14.dp))
-
-          Card(
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-          ) {
-            Column(modifier = Modifier.padding(14.dp)) {
-              Text(
-                text = "✨ Phase 2 Ready:",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-              )
-              Spacer(modifier = Modifier.height(6.dp))
-              Text(
-                text = "Phase 2 will integrate Firebase AI Logic to break down why this Short blew up (${video.outlierMultiplier}x outlier with ${video.views} views vs ${video.channelMedianViews} median), generating viral hook lines, title ideas, and customized 3-step script outlines in Hinglish/Hindi/English.",
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                lineHeight = 18.sp
-              )
-            }
-          }
-
-          Spacer(modifier = Modifier.height(20.dp))
-
-          Button(
-            onClick = { selectedAiVideo = null },
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.fillMaxWidth()
-          ) {
-            Text("Done")
-          }
-
-          Spacer(modifier = Modifier.height(24.dp))
+    // Gemini AI Breakdown ModalBottomSheet (Phase 2)
+    val activeVideo = selectedAiVideo
+    if (activeVideo != null) {
+      AiBottomSheet(
+        video = activeVideo,
+        aiUiState = aiUiState,
+        aiLanguage = aiLanguage,
+        onRegenerate = { viewModel.analyzeWithAi(activeVideo, forceRefresh = true) },
+        onDismiss = {
+          selectedAiVideo = null
+          viewModel.resetAiState()
         }
-      }
+      )
     }
-  }
-}
-
-object MainViewModelHolder {
-  private var container: AppContainer? = null
-
-  fun getKeyRepo(context: android.content.Context): com.example.data.repository.KeyRepository {
-    if (container == null) {
-      container = AppContainer(context.applicationContext)
-    }
-    return container!!.keyRepository
   }
 }
