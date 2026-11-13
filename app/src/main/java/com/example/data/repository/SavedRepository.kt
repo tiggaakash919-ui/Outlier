@@ -1,10 +1,12 @@
 package com.example.data.repository
 
+import android.content.Context
 import com.example.data.local.AppDatabase
 import com.example.data.local.SavedOutlierEntity
 import com.example.domain.OutlierCalculator
 import com.example.domain.OutlierVideo
 import com.example.domain.ShortStatus
+import com.example.worker.VelocityWorkScheduler
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.time.Instant
@@ -13,7 +15,9 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 class SavedRepository(
-  private val database: AppDatabase
+  private val context: Context,
+  private val database: AppDatabase,
+  private val velocityRepository: VelocityRepository
 ) {
   private val savedDao = database.savedOutlierDao()
 
@@ -55,11 +59,11 @@ class SavedRepository(
 
   suspend fun toggleSave(video: OutlierVideo): Boolean {
     val exists = savedDao.isSaved(video.videoId)
-    if (exists) {
+    val now = System.currentTimeMillis()
+    val nowSaved = if (exists) {
       savedDao.deleteSaved(video.videoId)
-      return false
+      false
     } else {
-      val now = System.currentTimeMillis()
       savedDao.saveOutlier(
         SavedOutlierEntity(
           videoId = video.videoId,
@@ -87,16 +91,52 @@ class SavedRepository(
           isOneHitWonder = video.isOneHitWonder
         )
       )
-      return true
+      true
     }
+    // Saving/unsaving updates velocity tracking and seeds/schedules snapshots.
+    velocityRepository.trackFromSave(video, nowSaved)
+    if (nowSaved) {
+      VelocityWorkScheduler.ensureScheduled(context)
+    }
+    return nowSaved
+  }
+
+  suspend fun toggleWatchlist(video: OutlierVideo): Boolean {
+    val nowWatchlisted = velocityRepository.toggleWatchlist(video)
+    if (nowWatchlisted) {
+      VelocityWorkScheduler.ensureScheduled(context)
+    }
+    return nowWatchlisted
+  }
+
+  suspend fun setWatchlisted(video: OutlierVideo, watchlisted: Boolean) {
+    velocityRepository.setWatchlisted(video, watchlisted)
+    if (watchlisted) VelocityWorkScheduler.ensureScheduled(context)
   }
 
   suspend fun remove(videoId: String) {
     savedDao.deleteSaved(videoId)
+    // Keep tracking row only if explicitly watchlisted.
+    val tracked = database.trackedVideoDao().get(videoId)
+    if (tracked != null) {
+      if (tracked.isWatchlisted) {
+        database.trackedVideoDao().setSaved(videoId, false)
+      } else {
+        database.trackedVideoDao().delete(videoId)
+      }
+    }
   }
 
   suspend fun clearAll() {
     savedDao.clearAll()
+    // Remove saved flag from tracked rows; keep watchlisted-only rows.
+    velocityRepository.getAllTracked().forEach { tracked ->
+      if (tracked.isWatchlisted) {
+        database.trackedVideoDao().setSaved(tracked.videoId, false)
+      } else {
+        database.trackedVideoDao().delete(tracked.videoId)
+      }
+    }
   }
 
   companion object {

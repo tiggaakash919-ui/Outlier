@@ -79,6 +79,7 @@ fun SavedScreen(
   savedList: List<OutlierVideo>,
   onRemove: (String) -> Unit,
   onAiClick: (OutlierVideo) -> Unit,
+  onCardClick: (OutlierVideo) -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
@@ -379,7 +380,8 @@ fun SavedScreen(
                 clipboard.setPrimaryClip(android.content.ClipData.newPlainText(label, content))
                 Toast.makeText(context, "✓ $label copied", Toast.LENGTH_SHORT).show()
               },
-              onAiClick = onAiClick
+              onAiClick = onAiClick,
+              onCardClick = onCardClick
             )
           }
         }

@@ -124,6 +124,7 @@ fun ResultsScreen(
   mode: DiscoveryMode = DiscoveryMode.KEYWORD,
   similarSeedTitle: String = "",
   onFindSimilar: ((OutlierVideo) -> Unit)? = null,
+  onCardClick: (OutlierVideo) -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
@@ -477,6 +478,7 @@ fun ResultsScreen(
           onCopyClick = { label, content -> copyToClipboard(label, content) },
           onAiClick = onAiClick,
           onFindSimilar = onFindSimilar,
+          onCardClick = onCardClick,
           modifier = Modifier.animateItem()
         )
       }

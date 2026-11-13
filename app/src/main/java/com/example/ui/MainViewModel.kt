@@ -13,6 +13,7 @@ import com.example.data.repository.OutlierRepository
 import com.example.data.repository.QuotaTracker
 import com.example.data.repository.SavedRepository
 import com.example.data.repository.SearchResult
+import com.example.data.repository.VelocityRepository
 import com.example.domain.AiUiState
 import com.example.domain.ApiKeyUi
 import com.example.domain.ChannelInputParser
@@ -28,7 +29,9 @@ import com.example.domain.OutlierVideo
 import com.example.domain.PresetType
 import com.example.domain.Presets
 import com.example.domain.QuotaStatus
+import com.example.domain.VelocityState
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -36,6 +39,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -43,7 +49,8 @@ enum class Screen {
   HOME,
   RESULTS,
   SAVED,
-  SETTINGS
+  SETTINGS,
+  DETAIL
 }
 
 class MainViewModel(
@@ -51,6 +58,7 @@ class MainViewModel(
   private val outlierRepository: OutlierRepository,
   private val savedRepository: SavedRepository,
   private val aiRepository: AiRepository,
+  private val velocityRepository: VelocityRepository,
   private val quotaTracker: QuotaTracker,
   private val apiKeyManager: ApiKeyManager,
   private val settingsStore: SettingsStore,
@@ -132,6 +140,28 @@ class MainViewModel(
   private val _isExpandingKeywords = MutableStateFlow(false)
   val isExpandingKeywords: StateFlow<Boolean> = _isExpandingKeywords.asStateFlow()
 
+  private val _selectedDetailVideo = MutableStateFlow<OutlierVideo?>(null)
+  val selectedDetailVideo: StateFlow<OutlierVideo?> = _selectedDetailVideo.asStateFlow()
+
+  @OptIn(ExperimentalCoroutinesApi::class)
+  val detailSnapshots = _selectedDetailVideo
+    .flatMapLatest { video ->
+      if (video == null) flowOf(emptyList())
+      else velocityRepository.snapshotsFlow(video.videoId)
+    }
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+  @OptIn(ExperimentalCoroutinesApi::class)
+  val detailTracked = _selectedDetailVideo
+    .flatMapLatest { video ->
+      if (video == null) flowOf(null)
+      else velocityRepository.trackedVideoFlow(video.videoId)
+    }
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+  val watchedChannels = velocityRepository.watchedChannelsFlow()
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
   private val _aiUiState = MutableStateFlow<AiUiState>(AiUiState.Idle)
   val aiUiState: StateFlow<AiUiState> = _aiUiState.asStateFlow()
 
@@ -181,6 +211,15 @@ class MainViewModel(
 
   fun navigateTo(screen: Screen) {
     _currentScreen.value = screen
+  }
+
+  fun openVideoDetail(video: OutlierVideo) {
+    _selectedDetailVideo.value = video
+    _currentScreen.value = Screen.DETAIL
+  }
+
+  fun closeVideoDetail() {
+    _selectedDetailVideo.value = null
   }
 
   fun updateFilters(newFilters: FilterOptions) {
@@ -432,7 +471,49 @@ class MainViewModel(
       _outliers.value = _outliers.value.map {
         if (it.videoId == video.videoId) it.copy(isSaved = isNowSaved) else it
       }
+      val selected = _selectedDetailVideo.value
+      if (selected?.videoId == video.videoId) {
+        _selectedDetailVideo.value = selected.copy(isSaved = isNowSaved)
+      }
       _userMessages.emit(if (isNowSaved) "✓ Video bookmarked in Saved" else "Removed from Saved")
+    }
+  }
+
+  fun toggleWatchlist(video: OutlierVideo) {
+    viewModelScope.launch {
+      val nowWatchlisted = savedRepository.toggleWatchlist(video)
+      _userMessages.emit(
+        if (nowWatchlisted) "✓ Watchlist me add ho gaya (velocity tracking on)"
+        else "Watchlist se hata diya gaya"
+      )
+    }
+  }
+
+  fun followWatchedChannel(
+    channelId: String,
+    channelTitle: String,
+    uploadsPlaylistId: String? = null,
+    subscriberCount: Long = 0L,
+    baselineMedian: Long = 0L
+  ) {
+    viewModelScope.launch {
+      velocityRepository.followChannel(
+        channelId = channelId,
+        channelTitle = channelTitle,
+        uploadsPlaylistId = uploadsPlaylistId,
+        subscriberCount = subscriberCount,
+        hasHiddenSubscribers = false,
+        baselineMedian = baselineMedian
+      )
+      velocityRepository.ensureVelocityWorkScheduled()
+      _userMessages.emit("✓ Channel watchlist me add ho gaya")
+    }
+  }
+
+  fun unfollowWatchedChannel(channelId: String) {
+    viewModelScope.launch {
+      velocityRepository.unfollowChannel(channelId)
+      _userMessages.emit("Channel watchlist se hata diya gaya")
     }
   }
 
@@ -505,6 +586,7 @@ class MainViewModel(
     viewModelScope.launch {
       clearCacheInternal()
       savedRepository.clearAll()
+      velocityRepository.clearVelocityData()
       database.quotaDao().clearQuota()
       settingsStore.clearAll()
       refreshMaskedKey()
@@ -516,6 +598,7 @@ class MainViewModel(
     private val outlierRepository: OutlierRepository,
     private val savedRepository: SavedRepository,
     private val aiRepository: AiRepository,
+    private val velocityRepository: VelocityRepository,
     private val quotaTracker: QuotaTracker,
     private val apiKeyManager: ApiKeyManager,
     private val settingsStore: SettingsStore,
@@ -524,14 +607,15 @@ class MainViewModel(
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
       return MainViewModel(
-        keyRepository,
-        outlierRepository,
-        savedRepository,
-        aiRepository,
-        quotaTracker,
-        apiKeyManager,
-        settingsStore,
-        database
+        keyRepository = keyRepository,
+        outlierRepository = outlierRepository,
+        savedRepository = savedRepository,
+        aiRepository = aiRepository,
+        velocityRepository = velocityRepository,
+        quotaTracker = quotaTracker,
+        apiKeyManager = apiKeyManager,
+        settingsStore = settingsStore,
+        database = database
       ) as T
     }
   }

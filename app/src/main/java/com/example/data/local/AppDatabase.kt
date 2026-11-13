@@ -16,9 +16,12 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     ShortVerificationCacheEntity::class,
     SavedOutlierEntity::class,
     AiCacheEntity::class,
-    NicheCacheEntity::class
+    NicheCacheEntity::class,
+    ViewSnapshotEntity::class,
+    TrackedVideoEntity::class,
+    WatchedChannelEntity::class
   ],
-  version = 6,
+  version = 7,
   exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -30,6 +33,9 @@ abstract class AppDatabase : RoomDatabase() {
   abstract fun savedOutlierDao(): SavedOutlierDao
   abstract fun aiCacheDao(): AiCacheDao
   abstract fun nicheCacheDao(): NicheCacheDao
+  abstract fun viewSnapshotDao(): ViewSnapshotDao
+  abstract fun trackedVideoDao(): TrackedVideoDao
+  abstract fun watchedChannelDao(): WatchedChannelDao
 
   companion object {
     @Volatile
@@ -260,6 +266,81 @@ abstract class AppDatabase : RoomDatabase() {
       }
     }
 
+    /**
+     * v6 -> v7: view snapshots, tracked/watchlisted videos and watched channels
+     * for velocity tracking and channel alerts.
+     */
+    val MIGRATION_6_7 = object : Migration(6, 7) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+          """
+          CREATE TABLE IF NOT EXISTS `view_snapshots` (
+            `videoId` TEXT NOT NULL,
+            `timestamp` INTEGER NOT NULL,
+            `views` INTEGER NOT NULL,
+            `likes` INTEGER NOT NULL,
+            `comments` INTEGER NOT NULL,
+            PRIMARY KEY(`videoId`, `timestamp`)
+          )
+          """.trimIndent()
+        )
+        db.execSQL(
+          "CREATE INDEX IF NOT EXISTS `index_view_snapshots_videoId` ON `view_snapshots` (`videoId`)"
+        )
+        db.execSQL(
+          "CREATE INDEX IF NOT EXISTS `index_view_snapshots_timestamp` ON `view_snapshots` (`timestamp`)"
+        )
+
+        db.execSQL(
+          """
+          CREATE TABLE IF NOT EXISTS `tracked_videos` (
+            `videoId` TEXT NOT NULL,
+            `title` TEXT NOT NULL,
+            `channelId` TEXT NOT NULL,
+            `channelTitle` TEXT NOT NULL,
+            `thumbnailUrl` TEXT NOT NULL,
+            `isSaved` INTEGER NOT NULL,
+            `isWatchlisted` INTEGER NOT NULL,
+            `addedAt` INTEGER NOT NULL,
+            `lastSnapshotAt` INTEGER NOT NULL,
+            PRIMARY KEY(`videoId`)
+          )
+          """.trimIndent()
+        )
+
+        db.execSQL(
+          """
+          CREATE TABLE IF NOT EXISTS `watched_channels` (
+            `channelId` TEXT NOT NULL,
+            `channelTitle` TEXT NOT NULL,
+            `uploadsPlaylistId` TEXT,
+            `subscriberCount` INTEGER NOT NULL,
+            `hasHiddenSubscribers` INTEGER NOT NULL,
+            `baselineMedian` INTEGER NOT NULL,
+            `addedAt` INTEGER NOT NULL,
+            `lastCheckedAt` INTEGER NOT NULL,
+            `lastNotifiedVideoId` TEXT,
+            PRIMARY KEY(`channelId`)
+          )
+          """.trimIndent()
+        )
+
+        // Seed tracking state from existing saved outliers so velocity can start
+        // without requiring a re-save.
+        db.execSQL(
+          """
+          INSERT OR IGNORE INTO `tracked_videos` (
+            `videoId`, `title`, `channelId`, `channelTitle`, `thumbnailUrl`,
+            `isSaved`, `isWatchlisted`, `addedAt`, `lastSnapshotAt`
+          )
+          SELECT `videoId`, `title`, `channelId`, `channelTitle`, `thumbnailUrl`,
+                 1, 0, `savedAt`, 0
+          FROM `saved_outliers`
+          """.trimIndent()
+        )
+      }
+    }
+
     fun getDatabase(context: Context): AppDatabase {
       return INSTANCE ?: synchronized(this) {
         val instance = Room.databaseBuilder(
@@ -267,7 +348,14 @@ abstract class AppDatabase : RoomDatabase() {
           AppDatabase::class.java,
           "outlier_radar_database"
         )
-          .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+          .addMigrations(
+            MIGRATION_1_2,
+            MIGRATION_2_3,
+            MIGRATION_3_4,
+            MIGRATION_4_5,
+            MIGRATION_5_6,
+            MIGRATION_6_7
+          )
           .build()
         INSTANCE = instance
         instance

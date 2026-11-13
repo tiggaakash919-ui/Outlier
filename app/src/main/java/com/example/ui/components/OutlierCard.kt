@@ -76,6 +76,7 @@ fun OutlierCard(
   onCopyClick: (String, String) -> Unit, // type, content
   onAiClick: (OutlierVideo) -> Unit,
   onFindSimilar: ((OutlierVideo) -> Unit)? = null,
+  onCardClick: ((OutlierVideo) -> Unit)? = null,
   modifier: Modifier = Modifier
 ) {
   var showCopyMenu by remember { mutableStateOf(false) }
@@ -84,7 +85,7 @@ fun OutlierCard(
     modifier = modifier
       .fillMaxWidth()
       .testTag("outlier_card_${video.videoId}")
-      .clickable { onOpenClick(video.videoId) },
+      .clickable { onCardClick?.invoke(video) ?: onOpenClick(video.videoId) },
     shape = RoundedCornerShape(20.dp),
     colors = CardDefaults.cardColors(
       containerColor = MaterialTheme.colorScheme.surface
@@ -129,7 +130,7 @@ fun OutlierCard(
             )
           }
 
-          // Play Overlay Icon
+          // Play Overlay Icon (opens detail; external open available on detail screen)
           Box(
             modifier = Modifier
               .align(Alignment.Center)
@@ -140,7 +141,7 @@ fun OutlierCard(
           ) {
             Icon(
               imageVector = Icons.Default.PlayArrow,
-              contentDescription = "Play",
+              contentDescription = "Open details",
               tint = Color.White,
               modifier = Modifier.size(20.dp)
             )

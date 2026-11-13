@@ -51,6 +51,7 @@ import com.example.domain.OutlierVideo
 import com.example.ui.MainViewModel
 import com.example.ui.Screen
 import com.example.ui.components.AiBottomSheet
+import com.example.ui.detail.DetailScreen
 import com.example.ui.home.HomeScreen
 import com.example.ui.onboarding.OnboardingScreen
 import com.example.ui.results.ResultsScreen
@@ -123,7 +124,8 @@ fun configureAppCheck(context: Context, intent: Intent?) {
 
 class MainActivity : ComponentActivity() {
 
-  private val appContainer by lazy { AppContainer(applicationContext) }
+  private val appContainer: AppContainer
+    get() = (application as OutlierRadarApp).container
 
   private val viewModel: MainViewModel by viewModels {
     MainViewModel.Factory(
@@ -131,6 +133,7 @@ class MainActivity : ComponentActivity() {
       outlierRepository = appContainer.outlierRepository,
       savedRepository = appContainer.savedRepository,
       aiRepository = appContainer.aiRepository,
+      velocityRepository = appContainer.velocityRepository,
       quotaTracker = appContainer.quotaTracker,
       apiKeyManager = appContainer.apiKeyManager,
       settingsStore = appContainer.settingsStore,
@@ -197,6 +200,7 @@ const val ROUTE_HOME = "home"
 const val ROUTE_RESULTS = "results"
 const val ROUTE_SAVED = "saved"
 const val ROUTE_SETTINGS = "settings"
+const val ROUTE_DETAIL = "detail"
 
 @Composable
 fun MainAppContent(
@@ -228,8 +232,13 @@ fun MainAppContent(
   val uiLanguage by viewModel.uiLanguage.collectAsStateWithLifecycle()
   val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
   val aiUiState by viewModel.aiUiState.collectAsStateWithLifecycle()
+  val selectedDetailVideo by viewModel.selectedDetailVideo.collectAsStateWithLifecycle()
+  val detailSnapshots by viewModel.detailSnapshots.collectAsStateWithLifecycle()
+  val detailTracked by viewModel.detailTracked.collectAsStateWithLifecycle()
+  val watchedChannels by viewModel.watchedChannels.collectAsStateWithLifecycle()
 
   var selectedAiVideo by remember { mutableStateOf<OutlierVideo?>(null) }
+  var detailReturnScreen by remember { mutableStateOf(Screen.RESULTS) }
 
   // Sync ViewModel screen state changes (e.g. when search starts -> RESULTS) with NavController
   LaunchedEffect(currentScreen) {
@@ -238,25 +247,30 @@ fun MainAppContent(
       Screen.RESULTS -> ROUTE_RESULTS
       Screen.SAVED -> ROUTE_SAVED
       Screen.SETTINGS -> ROUTE_SETTINGS
+      Screen.DETAIL -> ROUTE_DETAIL
     }
     if (currentRoute != targetRoute) {
       navController.navigate(targetRoute) {
-        popUpTo(navController.graph.findStartDestination().id) {
-          saveState = true
+        if (targetRoute == ROUTE_DETAIL) {
+          launchSingleTop = true
+          restoreState = false
+        } else {
+          popUpTo(navController.graph.findStartDestination().id) {
+            saveState = true
+          }
+          launchSingleTop = true
+          restoreState = true
         }
-        launchSingleTop = true
-        restoreState = true
       }
     }
   }
 
   BackHandler(enabled = currentRoute != ROUTE_HOME) {
-    viewModel.navigateTo(Screen.HOME)
-    navController.navigate(ROUTE_HOME) {
-      popUpTo(navController.graph.findStartDestination().id) {
-        inclusive = false
-      }
-      launchSingleTop = true
+    if (currentRoute == ROUTE_DETAIL) {
+      viewModel.closeVideoDetail()
+      viewModel.navigateTo(detailReturnScreen)
+    } else {
+      viewModel.navigateTo(Screen.HOME)
     }
   }
 
@@ -367,14 +381,46 @@ fun MainAppContent(
             onAiClick = { openAiSheetFor(it) },
             mode = filters.mode,
             similarSeedTitle = filters.similarSeedTitle,
-            onFindSimilar = { viewModel.findSimilar(it) }
+            onFindSimilar = { viewModel.findSimilar(it) },
+            onCardClick = {
+              detailReturnScreen = Screen.RESULTS
+              viewModel.openVideoDetail(it)
+            }
           )
         }
         composable(ROUTE_SAVED) {
           SavedScreen(
             savedList = savedOutliers,
             onRemove = { viewModel.removeSaved(it) },
-            onAiClick = { openAiSheetFor(it) }
+            onAiClick = { openAiSheetFor(it) },
+            onCardClick = {
+              detailReturnScreen = Screen.SAVED
+              viewModel.openVideoDetail(it)
+            }
+          )
+        }
+        composable(ROUTE_DETAIL) {
+          DetailScreen(
+            video = selectedDetailVideo,
+            snapshots = detailSnapshots,
+            tracked = detailTracked,
+            watchedChannels = watchedChannels,
+            onBack = {
+              viewModel.closeVideoDetail()
+              viewModel.navigateTo(detailReturnScreen)
+            },
+            onSaveToggle = { viewModel.toggleSave(it) },
+            onWatchlistToggle = { viewModel.toggleWatchlist(it) },
+            onFollowChannel = { video ->
+              viewModel.followWatchedChannel(
+                channelId = video.channelId,
+                channelTitle = video.channelTitle,
+                uploadsPlaylistId = null,
+                subscriberCount = video.subscriberCount,
+                baselineMedian = video.channelMedianViews
+              )
+            },
+            onUnfollowChannel = { viewModel.unfollowWatchedChannel(it) }
           )
         }
         composable(ROUTE_SETTINGS) {

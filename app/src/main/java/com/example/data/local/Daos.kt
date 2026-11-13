@@ -215,3 +215,102 @@ interface NicheCacheDao {
   @Query("DELETE FROM niche_cache")
   suspend fun clearNicheCache()
 }
+
+@Dao
+interface ViewSnapshotDao {
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun insertSnapshots(snapshots: List<ViewSnapshotEntity>)
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun insertSnapshot(snapshot: ViewSnapshotEntity)
+
+  @Query("SELECT * FROM view_snapshots WHERE videoId = :videoId ORDER BY timestamp ASC")
+  fun getSnapshotsFlow(videoId: String): Flow<List<ViewSnapshotEntity>>
+
+  @Query("SELECT * FROM view_snapshots WHERE videoId = :videoId ORDER BY timestamp ASC")
+  suspend fun getSnapshots(videoId: String): List<ViewSnapshotEntity>
+
+  @Query("SELECT * FROM view_snapshots WHERE videoId = :videoId ORDER BY timestamp DESC LIMIT 1")
+  suspend fun getLatestSnapshot(videoId: String): ViewSnapshotEntity?
+
+  @Query("SELECT DISTINCT videoId FROM view_snapshots")
+  suspend fun getTrackedVideoIds(): List<String>
+
+  @Query("DELETE FROM view_snapshots WHERE videoId = :videoId")
+  suspend fun deleteForVideo(videoId: String)
+
+  @Query("DELETE FROM view_snapshots WHERE timestamp < :before")
+  suspend fun deleteOlderThan(before: Long)
+
+  @Query("DELETE FROM view_snapshots")
+  suspend fun clearAll()
+}
+
+@Dao
+interface TrackedVideoDao {
+  @Query("SELECT * FROM tracked_videos WHERE isSaved = 1 OR isWatchlisted = 1")
+  suspend fun getAllTracked(): List<TrackedVideoEntity>
+
+  @Query("SELECT videoId FROM tracked_videos WHERE isSaved = 1 OR isWatchlisted = 1")
+  suspend fun getTrackedVideoIds(): List<String>
+
+  @Query("SELECT * FROM tracked_videos WHERE videoId = :videoId")
+  suspend fun get(videoId: String): TrackedVideoEntity?
+
+  @Query("SELECT * FROM tracked_videos WHERE videoId = :videoId")
+  fun getFlow(videoId: String): Flow<TrackedVideoEntity?>
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun upsert(entity: TrackedVideoEntity)
+
+  @Query("UPDATE tracked_videos SET isSaved = :isSaved WHERE videoId = :videoId")
+  suspend fun setSaved(videoId: String, isSaved: Boolean)
+
+  @Query("UPDATE tracked_videos SET isWatchlisted = :isWatchlisted WHERE videoId = :videoId")
+  suspend fun setWatchlisted(videoId: String, isWatchlisted: Boolean)
+
+  @Query("UPDATE tracked_videos SET lastSnapshotAt = :timestamp WHERE videoId = :videoId")
+  suspend fun updateLastSnapshotAt(videoId: String, timestamp: Long)
+
+  @Query("DELETE FROM tracked_videos WHERE videoId = :videoId AND isSaved = 0 AND isWatchlisted = 0")
+  suspend fun deleteIfUntracked(videoId: String)
+
+  @Query("DELETE FROM tracked_videos WHERE videoId = :videoId")
+  suspend fun delete(videoId: String)
+
+  @Query("DELETE FROM tracked_videos")
+  suspend fun clearAll()
+}
+
+@Dao
+interface WatchedChannelDao {
+  @Query("SELECT * FROM watched_channels ORDER BY addedAt DESC")
+  fun getAllFlow(): Flow<List<WatchedChannelEntity>>
+
+  @Query("SELECT * FROM watched_channels ORDER BY addedAt DESC")
+  suspend fun getAll(): List<WatchedChannelEntity>
+
+  @Query("SELECT * FROM watched_channels WHERE channelId = :channelId")
+  suspend fun get(channelId: String): WatchedChannelEntity?
+
+  @Query("SELECT EXISTS(SELECT 1 FROM watched_channels WHERE channelId = :channelId)")
+  fun isWatchedFlow(channelId: String): Flow<Boolean>
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun upsert(entity: WatchedChannelEntity)
+
+  @Query(
+    "UPDATE watched_channels SET lastCheckedAt = :checkedAt, lastNotifiedVideoId = :notifiedVideoId " +
+      "WHERE channelId = :channelId"
+  )
+  suspend fun updateCheckState(channelId: String, checkedAt: Long, notifiedVideoId: String?)
+
+  @Query("UPDATE watched_channels SET baselineMedian = :median, uploadsPlaylistId = :uploadsPlaylistId WHERE channelId = :channelId")
+  suspend fun updateBaseline(channelId: String, median: Long, uploadsPlaylistId: String?)
+
+  @Query("DELETE FROM watched_channels WHERE channelId = :channelId")
+  suspend fun delete(channelId: String)
+
+  @Query("DELETE FROM watched_channels")
+  suspend fun clearAll()
+}

@@ -13,6 +13,7 @@ import com.example.data.repository.KeyRepository
 import com.example.data.repository.OutlierRepository
 import com.example.data.repository.QuotaTracker
 import com.example.data.repository.SavedRepository
+import com.example.data.repository.VelocityRepository
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.OkHttpClient
@@ -101,7 +102,7 @@ class AppContainer(private val context: Context) {
   }
 
   val savedRepository: SavedRepository by lazy {
-    SavedRepository(database)
+    SavedRepository(context, database, velocityRepository)
   }
 
   val aiRepository: AiRepository by lazy {
@@ -109,5 +110,9 @@ class AppContainer(private val context: Context) {
       database = database,
       settingsStore = settingsStore
     )
+  }
+
+  val velocityRepository: VelocityRepository by lazy {
+    VelocityRepository(context, database)
   }
 }

@@ -135,3 +135,45 @@ data class NicheCacheEntity(
   val keywordsJson: String,
   val timestamp: Long
 )
+
+/** Periodic view/engagement snapshots for velocity tracking. */
+@Entity(
+  tableName = "view_snapshots",
+  primaryKeys = ["videoId", "timestamp"],
+  indices = [Index("videoId"), Index("timestamp")]
+)
+data class ViewSnapshotEntity(
+  val videoId: String,
+  val timestamp: Long,
+  val views: Long,
+  val likes: Long,
+  val comments: Long
+)
+
+/** Videos tracked for velocity snapshots (saved and/or explicitly watchlisted). */
+@Entity(tableName = "tracked_videos")
+data class TrackedVideoEntity(
+  @PrimaryKey val videoId: String,
+  val title: String,
+  val channelId: String,
+  val channelTitle: String,
+  val thumbnailUrl: String,
+  val isSaved: Boolean = false,
+  val isWatchlisted: Boolean = false,
+  val addedAt: Long,
+  val lastSnapshotAt: Long = 0L
+)
+
+/** Channels followed for daily outlier checks. */
+@Entity(tableName = "watched_channels")
+data class WatchedChannelEntity(
+  @PrimaryKey val channelId: String,
+  val channelTitle: String,
+  val uploadsPlaylistId: String? = null,
+  val subscriberCount: Long = 0L,
+  val hasHiddenSubscribers: Boolean = false,
+  val baselineMedian: Long = 0L,
+  val addedAt: Long,
+  val lastCheckedAt: Long = 0L,
+  val lastNotifiedVideoId: String? = null
+)
