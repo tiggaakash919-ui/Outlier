@@ -116,8 +116,7 @@ class ClassifyOutliersUseCase(
         othersAbove10xCount = validBaseline.othersAbove10xCount,
         shortStatus = ShortStatus.UNVERIFIED,
         isSaved = isSaved,
-        isOneHitWonder = oneHitWonder,
-        matchedKeyword = v.matchedKeyword
+        isOneHitWonder = oneHitWonder
       )
       finalCandidates.add(
         outlier.copy(
