@@ -10,7 +10,11 @@ import com.outlierradar.app.domain.AiAnalysis
 import com.outlierradar.app.domain.CacheTtl
 import com.outlierradar.app.domain.DiscoveryHelpers
 import com.outlierradar.app.domain.OutlierCalculator
+import com.outlierradar.app.domain.ContentGap
+import com.outlierradar.app.domain.ContentGapsReport
+import com.outlierradar.app.domain.ContentPack
 import com.outlierradar.app.domain.OutlierVideo
+import com.outlierradar.app.domain.ShotItem
 import com.outlierradar.app.domain.ScriptOutline
 import com.outlierradar.app.domain.TrendIdea
 import com.outlierradar.app.domain.TrendPatternSummary
