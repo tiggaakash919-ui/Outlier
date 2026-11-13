@@ -14,9 +14,13 @@ import com.outlierradar.app.data.repository.QuotaTracker
 import com.outlierradar.app.data.repository.SavedRepository
 import com.outlierradar.app.data.repository.SearchHistoryRepository
 import com.outlierradar.app.data.repository.SearchResult
+import com.outlierradar.app.data.repository.ContentGapsResult
+import com.outlierradar.app.data.repository.ContentPackResult
 import com.outlierradar.app.data.repository.TrendReportResult
 import com.outlierradar.app.data.repository.VelocityRepository
 import com.outlierradar.app.domain.AiUiState
+import com.outlierradar.app.domain.ContentGapsUiState
+import com.outlierradar.app.domain.ContentPackUiState
 import com.outlierradar.app.domain.ApiKeyUi
 import com.outlierradar.app.domain.ChannelInputParser
 import com.outlierradar.app.domain.CostEstimate
@@ -177,6 +181,12 @@ class MainViewModel(
 
   private val _aiUiState = MutableStateFlow<AiUiState>(AiUiState.Idle)
   val aiUiState: StateFlow<AiUiState> = _aiUiState.asStateFlow()
+
+  private val _contentPackUiState = MutableStateFlow<ContentPackUiState>(ContentPackUiState.Idle)
+  val contentPackUiState: StateFlow<ContentPackUiState> = _contentPackUiState.asStateFlow()
+
+  private val _contentGapsUiState = MutableStateFlow<ContentGapsUiState>(ContentGapsUiState.Idle)
+  val contentGapsUiState: StateFlow<ContentGapsUiState> = _contentGapsUiState.asStateFlow()
 
   private val _trendReportUiState = MutableStateFlow<TrendReportUiState>(TrendReportUiState.Idle)
   val trendReportUiState: StateFlow<TrendReportUiState> = _trendReportUiState.asStateFlow()
@@ -650,6 +660,38 @@ class MainViewModel(
 
   fun resetTrendReportState() {
     _trendReportUiState.value = TrendReportUiState.Idle
+  }
+
+  fun generateContentPack(video: OutlierVideo, forceRefresh: Boolean = false) {
+    _contentPackUiState.value = ContentPackUiState.Loading
+    viewModelScope.launch {
+      when (val res = aiRepository.generateContentPack(video, aiLanguage.value, forceRefresh)) {
+        is ContentPackResult.Success ->
+          _contentPackUiState.value = ContentPackUiState.Success(res.pack, res.isCached)
+        is ContentPackResult.Error ->
+          _contentPackUiState.value = ContentPackUiState.Error(res.message)
+      }
+    }
+  }
+
+  fun resetContentPackState() {
+    _contentPackUiState.value = ContentPackUiState.Idle
+  }
+
+  fun generateContentGaps(keyword: String, forceRefresh: Boolean = false) {
+    _contentGapsUiState.value = ContentGapsUiState.Loading
+    viewModelScope.launch {
+      when (val res = aiRepository.generateContentGaps(keyword, aiLanguage.value, forceRefresh)) {
+        is ContentGapsResult.Success ->
+          _contentGapsUiState.value = ContentGapsUiState.Success(res.report, res.isCached)
+        is ContentGapsResult.Error ->
+          _contentGapsUiState.value = ContentGapsUiState.Error(res.message)
+      }
+    }
+  }
+
+  fun resetContentGapsState() {
+    _contentGapsUiState.value = ContentGapsUiState.Idle
   }
 
   fun setGeminiModel(model: String) {

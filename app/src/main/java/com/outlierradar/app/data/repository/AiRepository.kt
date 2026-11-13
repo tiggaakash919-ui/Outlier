@@ -56,6 +56,16 @@ sealed interface TrendReportResult {
   data class Error(val message: String) : TrendReportResult
 }
 
+sealed interface ContentPackResult {
+  data class Success(val pack: ContentPack, val isCached: Boolean) : ContentPackResult
+  data class Error(val message: String) : ContentPackResult
+}
+
+sealed interface ContentGapsResult {
+  data class Success(val report: ContentGapsReport, val isCached: Boolean) : ContentGapsResult
+  data class Error(val message: String) : ContentGapsResult
+}
+
 /** Result of AUTO_EXPAND keyword generation. [fromAi] is false for the offline fallback. */
 data class KeywordExpansion(
   val keywords: List<String>,
@@ -175,12 +185,78 @@ class AiRepository(
     }
   }
 
+  private val contentPackSchema by lazy {
+    Schema.obj(
+      properties = mapOf(
+        "hookBreakdown" to Schema.string(description = "Why the first 0-3s hook works"),
+        "bodyBreakdown" to Schema.string(description = "Body/content flow breakdown"),
+        "payoffBreakdown" to Schema.string(description = "Payoff/loop ending breakdown"),
+        "pacingNotes" to Schema.string(description = "Pacing and retention notes"),
+        "emotionTriggers" to Schema.array(items = Schema.string(), description = "Emotion/curiosity triggers"),
+        "retentionDrivers" to Schema.array(items = Schema.string(), description = "Retention drivers"),
+        "filmableConcepts" to Schema.array(items = Schema.string(), description = "3 ready-to-film concepts"),
+        "titleIdeas" to Schema.array(items = Schema.string(), description = "5 high-CTR title ideas"),
+        "hookIdeas" to Schema.array(items = Schema.string(), description = "5 hook lines for 0-3s"),
+        "shotList" to Schema.array(
+          items = Schema.obj(
+            properties = mapOf(
+              "shot" to Schema.string(description = "Shot description"),
+              "visual" to Schema.string(description = "Visual/camera"),
+              "audio" to Schema.string(description = "Audio/voiceover")
+            )
+          ),
+          description = "Shot-by-shot list"
+        ),
+        "bRollIdeas" to Schema.array(items = Schema.string(), description = "B-roll ideas"),
+        "postingTime" to Schema.string(description = "Best posting time/day"),
+        "hashtags" to Schema.array(items = Schema.string(), description = "Relevant hashtags")
+      )
+    )
+  }
+
+  private val contentPackGenConfig by lazy {
+    generationConfig {
+      responseMimeType = "application/json"
+      responseSchema = contentPackSchema
+    }
+  }
+
+  private val contentGapsSchema by lazy {
+    Schema.obj(
+      properties = mapOf(
+        "summary" to Schema.string(description = "One-line summary of the content gap opportunity"),
+        "gaps" to Schema.array(
+          items = Schema.obj(
+            properties = mapOf(
+              "topic" to Schema.string(description = "Underserved topic/format"),
+              "whyGap" to Schema.string(description = "Why it is a gap"),
+              "suggestedIdea" to Schema.string(description = "Suggested Short idea"),
+              "estimatedDemand" to Schema.string(description = "Demand level: high/medium/low")
+            )
+          ),
+          description = "List of content gaps"
+        )
+      )
+    )
+  }
+
+  private val contentGapsGenConfig by lazy {
+    generationConfig {
+      responseMimeType = "application/json"
+      responseSchema = contentGapsSchema
+    }
+  }
+
   private var cachedModelName: String = ""
   private var cachedGenerativeModel: GenerativeModel? = null
   private var cachedTrendModelName: String = ""
   private var cachedTrendModel: GenerativeModel? = null
   private var cachedNicheModelName: String = ""
   private var cachedNicheModel: GenerativeModel? = null
+  private var cachedPackModelName: String = ""
+  private var cachedPackModel: GenerativeModel? = null
+  private var cachedGapsModelName: String = ""
+  private var cachedGapsModel: GenerativeModel? = null
 
   private fun getModelForName(modelName: String): GenerativeModel {
     val cleanName = modelName.trim().ifEmpty { "gemini-3.8-flash" }
@@ -218,6 +294,36 @@ class AiRepository(
     return cachedNicheModel ?: Firebase.ai.generativeModel(
       modelName = "gemini-3.8-flash",
       generationConfig = nicheGenConfig
+    )
+  }
+
+  private fun getPackModel(modelName: String): GenerativeModel {
+    val cleanName = modelName.trim().ifEmpty { "gemini-3.8-flash" }
+    if (cleanName != cachedPackModelName || cachedPackModel == null) {
+      cachedPackModelName = cleanName
+      cachedPackModel = Firebase.ai.generativeModel(
+        modelName = cleanName,
+        generationConfig = contentPackGenConfig
+      )
+    }
+    return cachedPackModel ?: Firebase.ai.generativeModel(
+      modelName = "gemini-3.8-flash",
+      generationConfig = contentPackGenConfig
+    )
+  }
+
+  private fun getGapsModel(modelName: String): GenerativeModel {
+    val cleanName = modelName.trim().ifEmpty { "gemini-3.8-flash" }
+    if (cleanName != cachedGapsModelName || cachedGapsModel == null) {
+      cachedGapsModelName = cleanName
+      cachedGapsModel = Firebase.ai.generativeModel(
+        modelName = cleanName,
+        generationConfig = contentGapsGenConfig
+      )
+    }
+    return cachedGapsModel ?: Firebase.ai.generativeModel(
+      modelName = "gemini-3.8-flash",
+      generationConfig = contentGapsGenConfig
     )
   }
 
@@ -368,6 +474,124 @@ class AiRepository(
     }
   }
 
+  suspend fun generateContentPack(
+    video: OutlierVideo,
+    language: String,
+    forceRefresh: Boolean = false
+  ): ContentPackResult = withContext(Dispatchers.IO) {
+    val promptLanguage = normalizeLanguageForPrompt(language)
+    val cacheKey = "contentpack_v1_${video.videoId}_${languageKey(language)}"
+
+    if (!forceRefresh) {
+      val cached = aiCacheDao.getAiCache(cacheKey)
+      if (cached != null) {
+        try {
+          val parsed = parseContentPack(cached.responseJson)
+          return@withContext ContentPackResult.Success(parsed, isCached = true)
+        } catch (e: Exception) {
+          Log.w(TAG, "Cached content pack parse failed, regenerating", e)
+        }
+      }
+    }
+
+    val modelName = settingsStore.geminiModel.firstOrNull()?.trim().orEmpty().ifEmpty { "gemini-3.8-flash" }
+    val prompt = buildContentPackPrompt(video, promptLanguage)
+    val thumbnail = downloadThumbnailBitmap(video.thumbnailUrl)
+
+    try {
+      val model = getPackModel(modelName)
+      val response = withRateLimitRetry {
+        withTimeout(60_000L) {
+          if (thumbnail != null) {
+            model.generateContent(
+              content {
+                image(thumbnail)
+                text(prompt)
+              }
+            )
+          } else {
+            model.generateContent(prompt)
+          }
+        }
+      }
+      val jsonString = response.text
+      if (jsonString.isNullOrBlank()) {
+        return@withContext ContentPackResult.Error("Content pack ka response khaali aaya. Dobara try karo.")
+      }
+      val pack = parseContentPack(jsonString)
+      aiCacheDao.insertAiCache(
+        AiCacheEntity(
+          cacheKey = cacheKey,
+          videoId = video.videoId,
+          language = languageKey(language),
+          responseJson = jsonString,
+          timestamp = System.currentTimeMillis()
+        )
+      )
+      ContentPackResult.Success(pack, isCached = false)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      Log.e(TAG, "Content pack generation failed for model=$modelName", e)
+      ContentPackResult.Error(mapAiException(e, modelName))
+    }
+  }
+
+  suspend fun generateContentGaps(
+    keyword: String,
+    language: String,
+    forceRefresh: Boolean = false
+  ): ContentGapsResult = withContext(Dispatchers.IO) {
+    val cleanKw = keyword.trim()
+    if (cleanKw.isBlank()) {
+      return@withContext ContentGapsResult.Error("Keyword daalo pehle.")
+    }
+    val promptLanguage = normalizeLanguageForPrompt(language)
+    val cacheKey = "contentgaps_v1_${sha256(cleanKw).take(16)}_${languageKey(language)}"
+
+    if (!forceRefresh) {
+      val cached = aiCacheDao.getAiCache(cacheKey)
+      if (cached != null) {
+        try {
+          val parsed = parseContentGaps(cached.responseJson)
+          return@withContext ContentGapsResult.Success(parsed, isCached = true)
+        } catch (e: Exception) {
+          Log.w(TAG, "Cached content gaps parse failed, regenerating", e)
+        }
+      }
+    }
+
+    val modelName = settingsStore.geminiModel.firstOrNull()?.trim().orEmpty().ifEmpty { "gemini-3.8-flash" }
+    val prompt = buildContentGapsPrompt(cleanKw, promptLanguage)
+
+    try {
+      val model = getGapsModel(modelName)
+      val response = withRateLimitRetry {
+        withTimeout(60_000L) { model.generateContent(prompt) }
+      }
+      val jsonString = response.text
+      if (jsonString.isNullOrBlank()) {
+        return@withContext ContentGapsResult.Error("Content gaps ka response khaali aaya. Dobara try karo.")
+      }
+      val report = parseContentGaps(jsonString)
+      aiCacheDao.insertAiCache(
+        AiCacheEntity(
+          cacheKey = cacheKey,
+          videoId = "__contentgaps__",
+          language = languageKey(language),
+          responseJson = jsonString,
+          timestamp = System.currentTimeMillis()
+        )
+      )
+      ContentGapsResult.Success(report, isCached = false)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      Log.e(TAG, "Content gaps generation failed for model=$modelName", e)
+      ContentGapsResult.Error(mapAiException(e, modelName))
+    }
+  }
+
   suspend fun generateTrendReport(
     videos: List<OutlierVideo>,
     language: String,
@@ -495,6 +719,26 @@ Return JSON with:
 """.trimIndent()
   }
 
+  private fun buildContentPackPrompt(video: OutlierVideo, language: String): String {
+    val tags = if (video.tags.isEmpty()) "none" else video.tags.take(8).joinToString(", ")
+    val desc = video.description.take(200).replace("\n", " ")
+    return """
+You are a YouTube Shorts viral-content strategist. You ONLY see metadata for one outlier Short. Do NOT invent watch-content, audio, or thumbnail details not present.
+Outlier: Title: ${video.title} | Channel: ${video.channelTitle} | Views: ${video.views} | Median: ${video.channelMedianViews} | Multiplier: ${OutlierCalculator.formatMultiplier(video.outlierMultiplier)}x | Duration: ${video.durationSeconds}s | Published: ${video.publishedAt.take(10)} | Tags: $tags | Desc: $desc
+Produce a ready-to-film content pack that a creator with ~500 subscribers can replicate to chase 100k views. Break down why it went viral (hook/body/payoff/pacing/emotion/retention), then give 3 filmable concepts, 5 titles, 5 hooks, a shot list, B-roll ideas, best posting time, and hashtags.
+Respond in $language.
+Return JSON with keys: hookBreakdown, bodyBreakdown, payoffBreakdown, pacingNotes, emotionTriggers[], retentionDrivers[], filmableConcepts[], titleIdeas[], hookIdeas[], shotList[{shot,visual,audio}], bRollIdeas[], postingTime, hashtags[].
+""".trimIndent()
+  }
+
+  private fun buildContentGapsPrompt(keyword: String, language: String): String {
+    return """
+You are a YouTube Shorts niche analyst. For the niche keyword "$keyword", identify content gaps: topics/formats that are under-served but have high demand potential. Suggest concrete Short ideas.
+Respond in $language.
+Return JSON with: summary (one line) and gaps[] where each has topic, whyGap, suggestedIdea, estimatedDemand (high/medium/low).
+""".trimIndent()
+  }
+
   private fun parseStringArray(json: JSONObject, key: String): List<String> {
     val arr = json.optJSONArray(key) ?: return emptyList()
     val out = mutableListOf<String>()
@@ -561,6 +805,51 @@ Return JSON with:
       ),
       ideas = ideas.take(5)
     )
+  }
+
+  private fun parseContentPack(jsonString: String): ContentPack {
+    val json = JSONObject(jsonString)
+    val shotArr = json.optJSONArray("shotList") ?: JSONArray()
+    val shots = mutableListOf<ShotItem>()
+    for (i in 0 until shotArr.length()) {
+      val o = shotArr.optJSONObject(i) ?: continue
+      shots.add(ShotItem(
+        shot = o.optString("shot", ""),
+        visual = o.optString("visual", ""),
+        audio = o.optString("audio", "")
+      ))
+    }
+    return ContentPack(
+      hookBreakdown = json.optString("hookBreakdown", ""),
+      bodyBreakdown = json.optString("bodyBreakdown", ""),
+      payoffBreakdown = json.optString("payoffBreakdown", ""),
+      pacingNotes = json.optString("pacingNotes", ""),
+      emotionTriggers = parseStringArray(json, "emotionTriggers"),
+      retentionDrivers = parseStringArray(json, "retentionDrivers"),
+      filmableConcepts = parseStringArray(json, "filmableConcepts"),
+      titleIdeas = parseStringArray(json, "titleIdeas"),
+      hookIdeas = parseStringArray(json, "hookIdeas"),
+      shotList = shots,
+      bRollIdeas = parseStringArray(json, "bRollIdeas"),
+      postingTime = json.optString("postingTime", ""),
+      hashtags = parseStringArray(json, "hashtags")
+    )
+  }
+
+  private fun parseContentGaps(jsonString: String): ContentGapsReport {
+    val json = JSONObject(jsonString)
+    val arr = json.optJSONArray("gaps") ?: JSONArray()
+    val gaps = mutableListOf<ContentGap>()
+    for (i in 0 until arr.length()) {
+      val o = arr.optJSONObject(i) ?: continue
+      gaps.add(ContentGap(
+        topic = o.optString("topic", ""),
+        whyGap = o.optString("whyGap", ""),
+        suggestedIdea = o.optString("suggestedIdea", ""),
+        estimatedDemand = o.optString("estimatedDemand", "")
+      ))
+    }
+    return ContentGapsReport(gaps = gaps, summary = json.optString("summary", ""))
   }
 
   /**

@@ -12,7 +12,8 @@ enum class SortOption(val label: String) {
   VIEWS("Views"),
   NEWEST("Newest"),
   LOWEST_SUBS("Lowest subs"),
-  VIEWS_PER_SUB("Views per sub")
+  VIEWS_PER_SUB("Views per sub"),
+  VPH("Views/hour")
 }
 
 /**
@@ -45,6 +46,7 @@ data class OutlierVideo(
   val channelP90Views: Long = 0L,
   val outlierMultiplier: Double,
   val viewsPerSub: Double,
+  val viewsPerHour: Double = 0.0,
   val likes: Long,
   val comments: Long,
   val durationSeconds: Long,
@@ -108,6 +110,40 @@ data class ScriptOutline(
   val payoffLoop: String = ""
 )
 
+data class ShotItem(
+  val shot: String = "",
+  val visual: String = "",
+  val audio: String = ""
+)
+
+data class ContentPack(
+  val hookBreakdown: String = "",
+  val bodyBreakdown: String = "",
+  val payoffBreakdown: String = "",
+  val pacingNotes: String = "",
+  val emotionTriggers: List<String> = emptyList(),
+  val retentionDrivers: List<String> = emptyList(),
+  val filmableConcepts: List<String> = emptyList(),
+  val titleIdeas: List<String> = emptyList(),
+  val hookIdeas: List<String> = emptyList(),
+  val shotList: List<ShotItem> = emptyList(),
+  val bRollIdeas: List<String> = emptyList(),
+  val postingTime: String = "",
+  val hashtags: List<String> = emptyList()
+)
+
+data class ContentGap(
+  val topic: String = "",
+  val whyGap: String = "",
+  val suggestedIdea: String = "",
+  val estimatedDemand: String = ""
+)
+
+data class ContentGapsReport(
+  val gaps: List<ContentGap> = emptyList(),
+  val summary: String = ""
+)
+
 data class AiAnalysis(
   val whyViral: List<String> = emptyList(),
   val hookIdeas: List<String> = emptyList(),
@@ -154,6 +190,20 @@ sealed interface TrendReportUiState {
   data class Error(val message: String) : TrendReportUiState
 }
 
+sealed interface ContentPackUiState {
+  data object Idle : ContentPackUiState
+  data object Loading : ContentPackUiState
+  data class Success(val pack: ContentPack, val isCached: Boolean) : ContentPackUiState
+  data class Error(val message: String) : ContentPackUiState
+}
+
+sealed interface ContentGapsUiState {
+  data object Idle : ContentGapsUiState
+  data object Loading : ContentGapsUiState
+  data class Success(val report: ContentGapsReport, val isCached: Boolean) : ContentGapsUiState
+  data class Error(val message: String) : ContentGapsUiState
+}
+
 data class FilterOptions(
   val keyword: String = "",
   val minSubs: Long = 0L,
@@ -176,6 +226,9 @@ data class FilterOptions(
   val excludeKeywords: String = "", // comma separated, matched against title + tags
   val minLikesRatio: Double = 0.0, // 0 = off, else likes / views
   val maxViralAgeDays: Int = 0, // 0 = off, else the viral Short must be this fresh
+  // --- small-channel replicable filter (1of10/NexLev) --------------------
+  val smallChannelMaxSubs: Long = 0L, // 0 = off; else only channels with subs <= this
+  val publishedWithinDays: Int = 0, // 0 = off; else viral Short published within N days
   // --- SIMILAR_TO_OUTLIER seed ------------------------------------------
   val similarSeedVideoId: String = "",
   val similarSeedTitle: String = "",

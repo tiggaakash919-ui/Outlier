@@ -29,7 +29,20 @@ class ClassifyOutliersUseCase(
         OutlierCalculator.calculateMultiplier(v.views, medianInfo.median)
       } else null
 
-      val rejectionReason = if (medianInfo == null && v.channelId in skippedByCostIds) {
+      // Small-channel replicable filter (1of10/NexLev): only channels with subs <= threshold.
+      val smallChannelReject = if (filters.smallChannelMaxSubs > 0L && subs > filters.smallChannelMaxSubs) {
+        "Channel ${OutlierCalculator.formatCompactNumber(subs)} subs > ${OutlierCalculator.formatCompactNumber(filters.smallChannelMaxSubs)} (not replicable)"
+      } else null
+
+      // Published-within-N-days filter for the viral Short itself.
+      val publishedWithinReject = if (filters.publishedWithinDays > 0) {
+        val ageDays = try {
+          java.time.Duration.between(java.time.Instant.parse(v.publishedAt), java.time.Instant.now()).toDays()
+        } catch (_: Exception) { 0L }
+        if (ageDays > filters.publishedWithinDays) "Viral Short older than ${filters.publishedWithinDays}d" else null
+      } else null
+
+      val rejectionReason = smallChannelReject ?: publishedWithinReject ?: if (medianInfo == null && v.channelId in skippedByCostIds) {
         "Median skipped (cost)"
       } else {
         OutlierCalculator.buildNearMissReason(
@@ -95,6 +108,7 @@ class ClassifyOutliersUseCase(
           channelP90Views = validBaseline.p90,
           outlierMultiplier = validMultiplier,
           viewsPerSub = viewsPerSub,
+          viewsPerHour = OutlierCalculator.calculateViewsPerHour(v.views, v.publishedAt),
           likes = v.likes,
           comments = v.comments,
           durationSeconds = v.durationSeconds,

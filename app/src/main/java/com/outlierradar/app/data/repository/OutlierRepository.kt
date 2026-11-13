@@ -630,6 +630,7 @@ class OutlierRepository(
             channelP90Views = baseline.p90,
             outlierMultiplier = multiplier,
             viewsPerSub = OutlierCalculator.calculateViewsPerSub(v.views, subs),
+            viewsPerHour = OutlierCalculator.calculateViewsPerHour(v.views, v.publishedAt),
             likes = v.likes,
             comments = v.comments,
             durationSeconds = v.durationSeconds,

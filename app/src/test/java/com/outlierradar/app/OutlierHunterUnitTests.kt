@@ -273,7 +273,7 @@ class OutlierHunterUnitTests {
 
     val contentWithoutBom = String(csvBytes.drop(3).toByteArray(), Charsets.UTF_8)
     val header = contentWithoutBom.lineSequence().firstOrNull().orEmpty()
-    assertTrue(header.startsWith("Title,Channel,ChannelURL,Subs,Views,Median,Multiplier,ViewsPerSub,Likes,Comments,Duration,UploadDate,Tags,ShortStatus,VideoURL"))
+    assertTrue(header.startsWith("Title,Channel,ChannelURL,Subs,Views,Median,Multiplier,ViewsPerSub,ViewsPerHour,Likes,Comments,Duration,UploadDate,Tags,ShortStatus,VideoURL"))
     assertTrue(header.contains("SavedAt"))
     assertTrue(header.contains("Folder"))
     assertTrue(header.contains("SavedTags"))

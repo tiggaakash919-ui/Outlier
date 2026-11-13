@@ -230,6 +230,12 @@ fun OutlierCard(
               fontSize = 12.sp,
               color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+              text = "· ${String.format(Locale.US, "%.0f", video.viewsPerHour)} v/h",
+              fontSize = 11.sp,
+              color = SecondaryCyan
+            )
           }
 
           Spacer(modifier = Modifier.height(4.dp))

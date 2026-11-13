@@ -44,6 +44,7 @@ class SavedRepository(
         channelP90Views = entity.p90Views,
         outlierMultiplier = entity.multiplier,
         viewsPerSub = entity.viewsPerSub,
+        viewsPerHour = OutlierCalculator.calculateViewsPerHour(entity.views, entity.publishedAt),
         likes = entity.likes,
         comments = entity.comments,
         durationSeconds = entity.durationSeconds,
@@ -173,7 +174,7 @@ class SavedRepository(
       val sb = StringBuilder()
       val header = mutableListOf(
         "Title", "Channel", "ChannelURL", "Subs", "Views", "Median", "Multiplier",
-        "ViewsPerSub", "Likes", "Comments", "Duration", "UploadDate", "Tags",
+        "ViewsPerSub", "ViewsPerHour", "Likes", "Comments", "Duration", "UploadDate", "Tags",
         "ShortStatus", "VideoURL"
       )
       if (includeSavedColumns) {
@@ -203,6 +204,7 @@ class SavedRepository(
           item.channelMedianViews.toString(),
           "${OutlierCalculator.formatMultiplier(item.outlierMultiplier)}x",
           viewsPerSubStr,
+          String.format(Locale.US, "%.0f", item.viewsPerHour),
           item.likes.toString(),
           item.comments.toString(),
           "${item.durationSeconds}s",

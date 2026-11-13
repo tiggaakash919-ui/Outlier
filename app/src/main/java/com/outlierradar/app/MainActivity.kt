@@ -235,6 +235,8 @@ fun MainAppContent(
   val uiLanguage by viewModel.uiLanguage.collectAsStateWithLifecycle()
   val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
   val aiUiState by viewModel.aiUiState.collectAsStateWithLifecycle()
+  val contentPackUiState by viewModel.contentPackUiState.collectAsStateWithLifecycle()
+  val contentGapsUiState by viewModel.contentGapsUiState.collectAsStateWithLifecycle()
   val trendReportUiState by viewModel.trendReportUiState.collectAsStateWithLifecycle()
   val selectedDetailVideo by viewModel.selectedDetailVideo.collectAsStateWithLifecycle()
   val detailSnapshots by viewModel.detailSnapshots.collectAsStateWithLifecycle()
@@ -400,6 +402,9 @@ fun MainAppContent(
             },
             onVerifyShort = { viewModel.requestLazyVerification(it) },
             trendReportUiState = trendReportUiState,
+            contentGapsUiState = contentGapsUiState,
+            onGenerateContentGaps = { kw -> viewModel.generateContentGaps(kw) },
+            onResetContentGaps = { viewModel.resetContentGapsState() },
             onGenerateTrendReport = { selected -> viewModel.generateTrendReport(selected) },
             onResetTrendReport = { viewModel.resetTrendReportState() }
           )
@@ -426,6 +431,7 @@ fun MainAppContent(
             tracked = detailTracked,
             watchedChannels = watchedChannels,
             aiUiState = aiUiState,
+            contentPackUiState = contentPackUiState,
             aiLanguage = aiLanguage,
             onBack = {
               viewModel.closeVideoDetail()
@@ -444,7 +450,8 @@ fun MainAppContent(
             },
             onUnfollowChannel = { viewModel.unfollowWatchedChannel(it) },
             onFindSimilar = { viewModel.findSimilar(it) },
-            onAnalyzeAi = { video, force -> viewModel.analyzeWithAi(video, force) }
+            onAnalyzeAi = { video, force -> viewModel.analyzeWithAi(video, force) },
+            onGenerateContentPack = { video, force -> viewModel.generateContentPack(video, force) }
           )
         }
         composable(ROUTE_SETTINGS) {

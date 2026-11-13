@@ -800,6 +800,42 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
+            // Small-channel replicable filter (1of10/NexLev)
+            Text(
+              text = "Replicable (small channel) max subs",
+              fontSize = 13.sp,
+              color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              listOf(0L to "Off", 10_000L to "10K", 25_000L to "25K", 50_000L to "50K", 100_000L to "100K").forEach { (subs, label) ->
+                ElevatedFilterChip(
+                  selected = filters.smallChannelMaxSubs == subs,
+                  onClick = { onFiltersChange(filters.copy(smallChannelMaxSubs = subs)) },
+                  label = { Text(label, fontSize = 12.sp) }
+                )
+              }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+              text = "Viral Short published within",
+              fontSize = 13.sp,
+              color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              listOf(0 to "Any", 7 to "7d", 30 to "30d", 60 to "60d", 90 to "90d").forEach { (days, label) ->
+                ElevatedFilterChip(
+                  selected = filters.publishedWithinDays == days,
+                  onClick = { onFiltersChange(filters.copy(publishedWithinDays = days)) },
+                  label = { Text(label, fontSize = 12.sp) }
+                )
+              }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
             // Region [IN, US, Any] & Language [Hindi, English, Any]
             Row(
               modifier = Modifier.fillMaxWidth(),

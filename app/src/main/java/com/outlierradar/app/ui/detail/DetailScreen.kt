@@ -81,6 +81,7 @@ import com.outlierradar.app.data.local.ViewSnapshotEntity
 import com.outlierradar.app.data.local.WatchedChannelEntity
 import com.outlierradar.app.domain.AiAnalysis
 import com.outlierradar.app.domain.AiUiState
+import com.outlierradar.app.domain.ContentPackUiState
 import com.outlierradar.app.domain.OutlierCalculator
 import com.outlierradar.app.domain.OutlierVideo
 import com.outlierradar.app.domain.VelocityCalculator
@@ -105,6 +106,7 @@ fun DetailScreen(
   tracked: TrackedVideoEntity?,
   watchedChannels: List<WatchedChannelEntity>,
   aiUiState: AiUiState = AiUiState.Idle,
+  contentPackUiState: ContentPackUiState = ContentPackUiState.Idle,
   aiLanguage: String = "Hinglish",
   onBack: () -> Unit,
   onSaveToggle: (OutlierVideo) -> Unit,
@@ -113,6 +115,7 @@ fun DetailScreen(
   onUnfollowChannel: (String) -> Unit,
   onFindSimilar: (OutlierVideo) -> Unit = {},
   onAnalyzeAi: (OutlierVideo, Boolean) -> Unit = { _, _ -> },
+  onGenerateContentPack: (OutlierVideo, Boolean) -> Unit = { _, _ -> },
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
@@ -267,6 +270,90 @@ fun DetailScreen(
         aiLanguage = aiLanguage,
         onAnalyze = { force -> onAnalyzeAi(video, force) }
       )
+
+      // Create Pack (filmable concept + titles/hooks/shots)
+      Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = PrimaryViolet)
+              Spacer(Modifier.width(8.dp))
+              Text("Create Pack (filmable)", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+            }
+            IconButton(onClick = { onGenerateContentPack(video, true) }) {
+              Icon(Icons.Default.Refresh, contentDescription = "Regenerate", tint = SecondaryCyan)
+            }
+          }
+          Text("Outlier se replicate karne ka ready-to-film pack.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+          when (contentPackUiState) {
+            is ContentPackUiState.Idle -> {
+              Button(onClick = { onGenerateContentPack(video, false) }, colors = ButtonDefaults.buttonColors(containerColor = PrimaryViolet)) {
+                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp)); Text("Generate Content Pack", color = Color.White)
+              }
+            }
+            is ContentPackUiState.Loading -> {
+              Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = PrimaryViolet)
+                Spacer(Modifier.width(8.dp))
+                Text("Pack generate ho raha hai...", fontSize = 13.sp, color = SecondaryCyan)
+              }
+            }
+            is ContentPackUiState.Error -> {
+              Text((contentPackUiState as ContentPackUiState.Error).message, fontSize = 13.sp, color = AccentRed)
+              Button(onClick = { onGenerateContentPack(video, true) }, colors = ButtonDefaults.buttonColors(containerColor = AccentRed)) {
+                Text("Try again", color = Color.White)
+              }
+            }
+            is ContentPackUiState.Success -> {
+              val pack = (contentPackUiState as ContentPackUiState.Success).pack
+              if (pack.filmableConcepts.isNotEmpty()) {
+                Text("Concepts", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = PrimaryViolet)
+                pack.filmableConcepts.forEachIndexed { i, c -> Text("${i + 1}. $c", fontSize = 13.sp) }
+              }
+              if (pack.titleIdeas.isNotEmpty()) {
+                Text("Titles", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = PrimaryViolet)
+                pack.titleIdeas.forEach { Text("• $it", fontSize = 13.sp) }
+              }
+              if (pack.hookIdeas.isNotEmpty()) {
+                Text("Hooks", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = PrimaryViolet)
+                pack.hookIdeas.forEach { Text("• $it", fontSize = 13.sp) }
+              }
+              if (pack.shotList.isNotEmpty()) {
+                Text("Shot list", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = PrimaryViolet)
+                pack.shotList.forEachIndexed { i, s -> Text("${i + 1}. ${s.shot} — ${s.visual} / ${s.audio}", fontSize = 12.sp) }
+              }
+              if (pack.bRollIdeas.isNotEmpty()) {
+                Text("B-roll", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = PrimaryViolet)
+                pack.bRollIdeas.forEach { Text("• $it", fontSize = 12.sp) }
+              }
+              if (pack.postingTime.isNotBlank()) Text("Posting: ${pack.postingTime}", fontSize = 12.sp, color = SecondaryCyan)
+              if (pack.hashtags.isNotEmpty()) Text("Tags: ${pack.hashtags.joinToString(" ")}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+              val packText = buildString {
+                appendLine("Content Pack: ${video.title}")
+                if (pack.filmableConcepts.isNotEmpty()) { appendLine("\nConcepts:"); pack.filmableConcepts.forEach { appendLine("- $it") } }
+                if (pack.titleIdeas.isNotEmpty()) { appendLine("\nTitles:"); pack.titleIdeas.forEach { appendLine("- $it") } }
+                if (pack.hookIdeas.isNotEmpty()) { appendLine("\nHooks:"); pack.hookIdeas.forEach { appendLine("- $it") } }
+                if (pack.shotList.isNotEmpty()) { appendLine("\nShot list:"); pack.shotList.forEachIndexed { i, s -> appendLine("${i + 1}. ${s.shot} — ${s.visual} / ${s.audio}") } }
+                if (pack.bRollIdeas.isNotEmpty()) { appendLine("\nB-roll:"); pack.bRollIdeas.forEach { appendLine("- $it") } }
+                if (pack.postingTime.isNotBlank()) appendLine("\nPosting: ${pack.postingTime}")
+              }
+              Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { copyText(context, "Content Pack", packText) }) {
+                  Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(15.dp))
+                  Spacer(Modifier.width(4.dp)); Text("Copy", fontSize = 12.sp)
+                }
+                OutlinedButton(onClick = { shareText(context, "Outlier Content Pack", packText) }) {
+                  Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(15.dp))
+                  Spacer(Modifier.width(4.dp)); Text("Share", fontSize = 12.sp)
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // no auto-trigger; user taps Generate
 
       VelocityCard(velocity = velocity, snapshots = snapshots)
       ViewsChartCard(snapshots = snapshots)

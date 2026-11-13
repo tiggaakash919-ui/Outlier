@@ -43,6 +43,18 @@ object OutlierCalculator {
     return viralViews.toDouble() / subscriberCount.toDouble()
   }
 
+  /** Views per hour since publish (VPH). */
+  fun calculateViewsPerHour(views: Long, publishedAt: String, now: Instant = Instant.now()): Double {
+    if (publishedAt.isBlank()) return 0.0
+    return try {
+      val published = Instant.parse(publishedAt)
+      val hours = java.time.Duration.between(published, now).toHours().coerceAtLeast(1)
+      views.toDouble() / hours.toDouble()
+    } catch (_: Exception) {
+      0.0
+    }
+  }
+
   fun calculateEngagementRate(views: Long, likes: Long): String? {
     if (views <= 0 || likes <= 0) return null
     val pct = (likes.toDouble() / views.toDouble()) * 100.0

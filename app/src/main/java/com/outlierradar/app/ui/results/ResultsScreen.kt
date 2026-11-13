@@ -95,6 +95,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import com.outlierradar.app.data.repository.SavedRepository
+import com.outlierradar.app.domain.ContentGapsUiState
 import com.outlierradar.app.domain.DebugStats
 import com.outlierradar.app.domain.DiscoveryMode
 import com.outlierradar.app.domain.EmptyStageReason
@@ -146,6 +147,9 @@ fun ResultsScreen(
   onCardClick: (OutlierVideo) -> Unit = {},
   onVerifyShort: (String) -> Unit = {},
   trendReportUiState: TrendReportUiState = TrendReportUiState.Idle,
+  contentGapsUiState: ContentGapsUiState = ContentGapsUiState.Idle,
+  onGenerateContentGaps: (String) -> Unit = {},
+  onResetContentGaps: () -> Unit = {},
   onGenerateTrendReport: (List<OutlierVideo>) -> Unit = {},
   onResetTrendReport: () -> Unit = {},
   modifier: Modifier = Modifier
@@ -176,6 +180,7 @@ fun ResultsScreen(
         SortOption.NEWEST -> list.sortedByDescending { it.publishedAt }
         SortOption.LOWEST_SUBS -> list.sortedBy { it.subscriberCount }
         SortOption.VIEWS_PER_SUB -> list.sortedByDescending { it.viewsPerSub }
+        SortOption.VPH -> list.sortedByDescending { it.viewsPerHour }
       }
     }
   }
@@ -634,6 +639,47 @@ fun ResultsScreen(
               modifier = Modifier.weight(1f).testTag("try_more_button")
             ) { Text("Try more 🎯", fontSize = 14.sp, color = SecondaryCyan) }
           }
+        }
+      }
+
+      if (!isLoading && trimmedKeyword.isNotBlank()) {
+        item {
+          Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+              Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                  Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = PrimaryViolet)
+                  Spacer(Modifier.width(8.dp))
+                  Text("Content Gaps", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                }
+                if (contentGapsUiState is ContentGapsUiState.Idle) {
+                  OutlinedButton(onClick = { onGenerateContentGaps(trimmedKeyword) }) { Text("Detect gaps", fontSize = 12.sp) }
+                } else {
+                  IconButton(onClick = { onGenerateContentGaps(trimmedKeyword) }) { Icon(Icons.Default.Refresh, contentDescription = "Regenerate", tint = SecondaryCyan) }
+                }
+              }
+              when (contentGapsUiState) {
+                is ContentGapsUiState.Idle -> Text("Underserved topics in \"$trimmedKeyword\" niche.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                is ContentGapsUiState.Loading -> Row(verticalAlignment = Alignment.CenterVertically) {
+                  CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = PrimaryViolet)
+                  Spacer(Modifier.width(8.dp)); Text("Gaps detect ho rahe hain...", fontSize = 12.sp, color = SecondaryCyan)
+                }
+                is ContentGapsUiState.Error -> Text((contentGapsUiState as ContentGapsUiState.Error).message, fontSize = 12.sp, color = AccentRed)
+                is ContentGapsUiState.Success -> {
+                  val r = (contentGapsUiState as ContentGapsUiState.Success).report
+                  if (r.summary.isNotBlank()) Text(r.summary, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                  r.gaps.forEach { g ->
+                    Column(modifier = Modifier.padding(top = 6.dp)) {
+                      Text("• ${g.topic} (${g.estimatedDemand})", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                      if (g.whyGap.isNotBlank()) Text(g.whyGap, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                      if (g.suggestedIdea.isNotBlank()) Text("Idea: ${g.suggestedIdea}", fontSize = 11.sp, color = SecondaryCyan)
+                    }
+                  }
+                }
+              }
+            }
+          }
+          Spacer(modifier = Modifier.height(8.dp))
         }
       }
 
