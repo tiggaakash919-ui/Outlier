@@ -170,8 +170,8 @@ class OutlierRepository(
       }
     }
 
-    var key = apiKeyManager.acquireKey(QuotaBucket.SEARCH)
-    if (key == null) {
+    val startKey = apiKeyManager.acquireKey(QuotaBucket.SEARCH)
+    if (startKey == null) {
       val hasKeys = settingsStore.getApiKeys().isNotEmpty()
       return SearchResult.Error(
         message = if (hasKeys) {
@@ -184,6 +184,7 @@ class OutlierRepository(
         failedBucket = QuotaBucket.SEARCH
       )
     }
+    var key: ActiveKey = startKey
 
     var lastError: SearchResult.Error? = null
 

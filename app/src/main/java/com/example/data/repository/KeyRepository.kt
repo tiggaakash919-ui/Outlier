@@ -84,7 +84,7 @@ class KeyRepository(
     replaceActiveKey(rawKey)
 
   private suspend fun testKey(rawKey: String, saveMode: SaveMode): KeyValidationResult {
-    try {
+    return try {
       // 1 unit test call: channels.list?part=id&id=UC_x5XG1OV2P6uZZ5FSM9Ttw
       val response = youTubeApi.getChannels(
         part = "id",

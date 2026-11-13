@@ -61,11 +61,20 @@ class ApiKeyManager(
     val keys = settingsStore.getApiKeys()
     if (keys.isEmpty()) return null
 
-    val nextSlot = KeyRotation.nextSlot(keys.map { it.slot }, failed.index) { slot ->
-      if (slot == failed.index) return@nextSlot false
-      val stored = keys.firstOrNull { it.slot == slot } ?: return@nextSlot false
-      quotaTracker.isBucketAvailable(ApiKeyFingerprint.of(stored.value), bucket)
-    } ?: return null
+    // The rotation helper takes a plain predicate, so resolve availability first.
+    val availableSlots = mutableSetOf<Int>()
+    for (stored in keys) {
+      if (stored.slot == failed.index) continue
+      if (quotaTracker.isBucketAvailable(ApiKeyFingerprint.of(stored.value), bucket)) {
+        availableSlots.add(stored.slot)
+      }
+    }
+
+    val nextSlot = KeyRotation.nextSlot(
+      slots = keys.map { it.slot },
+      activeSlot = failed.index,
+      isAvailable = { it in availableSlots }
+    ) ?: return null
 
     settingsStore.setActiveKeyIndex(nextSlot)
     _notices.tryEmit(
