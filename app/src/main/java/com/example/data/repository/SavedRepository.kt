@@ -167,8 +167,9 @@ class SavedRepository(
 
     /**
      * Generates UTF-8 CSV with 3-byte UTF-8 BOM (EF BB BF) so Excel renders Hindi/Hinglish text intact.
+     * Default behavior is backward-compatible "saved" export (includes SavedAt column).
      */
-    fun generateCsvBytesWithBom(items: List<OutlierVideo>, includeSavedColumns: Boolean = false): ByteArray {
+    fun generateCsvBytesWithBom(items: List<OutlierVideo>, includeSavedColumns: Boolean = true): ByteArray {
       val sb = StringBuilder()
       val header = mutableListOf(
         "Title", "Channel", "ChannelURL", "Subs", "Views", "Median", "Multiplier",
