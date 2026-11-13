@@ -51,18 +51,20 @@ class OutlierHunterUnitTests {
 
   @Test
   fun testOutlierCalculatorMultiplierAndBadges() {
-    // Multiplier = viralViews / medianViews
-    assertEquals(500, OutlierCalculator.calculateMultiplier(1_000_000L, 2_000L))
-    assertEquals(50, OutlierCalculator.calculateMultiplier(250_000L, 5_000L))
-    assertEquals(20, OutlierCalculator.calculateMultiplier(100_000L, 5_000L))
+    // Multiplier = viralViews / medianViews (now a Double, not rounded)
+    assertEquals(500.0, OutlierCalculator.calculateMultiplier(1_000_000L, 2_000L), 0.0001)
+    assertEquals(50.0, OutlierCalculator.calculateMultiplier(250_000L, 5_000L), 0.0001)
+    assertEquals(20.0, OutlierCalculator.calculateMultiplier(100_000L, 5_000L), 0.0001)
+    assertEquals(8.5, OutlierCalculator.calculateMultiplier(17_000L, 2_000L), 0.0001)
+    assertEquals(0.0, OutlierCalculator.calculateMultiplier(1_000L, 0L), 0.0001)
 
     // Badges: >= 500x MEGA, 50-499x HIGH, <50x LOW
-    assertEquals(BadgeTier.MEGA, OutlierCalculator.getBadgeTier(500))
-    assertEquals(BadgeTier.MEGA, OutlierCalculator.getBadgeTier(1200))
-    assertEquals(BadgeTier.HIGH, OutlierCalculator.getBadgeTier(50))
-    assertEquals(BadgeTier.HIGH, OutlierCalculator.getBadgeTier(499))
-    assertEquals(BadgeTier.LOW, OutlierCalculator.getBadgeTier(49))
-    assertEquals(BadgeTier.LOW, OutlierCalculator.getBadgeTier(10))
+    assertEquals(BadgeTier.MEGA, OutlierCalculator.getBadgeTier(500.0))
+    assertEquals(BadgeTier.MEGA, OutlierCalculator.getBadgeTier(1200.0))
+    assertEquals(BadgeTier.HIGH, OutlierCalculator.getBadgeTier(50.0))
+    assertEquals(BadgeTier.HIGH, OutlierCalculator.getBadgeTier(499.0))
+    assertEquals(BadgeTier.LOW, OutlierCalculator.getBadgeTier(49.0))
+    assertEquals(BadgeTier.LOW, OutlierCalculator.getBadgeTier(10.0))
 
     // Views per sub
     val viewsPerSub = OutlierCalculator.calculateViewsPerSub(1_000_000L, 10_000L)
@@ -174,7 +176,7 @@ class OutlierHunterUnitTests {
       subscriberCount = 250_000L,
       shortCount = 10,
       medianViews = 2_000L,
-      multiplier = 100,
+      multiplier = 100.0,
       filters = defaultFilters
     )
     assertEquals("Subs 250K > max 10K", reasonSubs)
@@ -194,27 +196,27 @@ class OutlierHunterUnitTests {
       subscriberCount = 4_000L,
       shortCount = 15,
       medianViews = 12_000L,
-      multiplier = 80,
+      multiplier = 80.0,
       filters = defaultFilters
     )
     assertEquals("Median 12K > max 5K", reasonMedian)
 
-    // 4. Multiplier too low: "Multiplier 8x < 50x"
+    // 4. Multiplier too low: "Multiplier 8.0x < 50x" (one decimal under 10x)
     val reasonMultiplier = OutlierCalculator.buildNearMissReason(
       subscriberCount = 4_000L,
       shortCount = 15,
       medianViews = 4_000L,
-      multiplier = 8,
+      multiplier = 8.0,
       filters = defaultFilters
     )
-    assertEquals("Multiplier 8x < 50x", reasonMultiplier)
+    assertEquals("Multiplier 8.0x < 50x", reasonMultiplier)
 
     // 5. Passing candidate returns null
     val passing = OutlierCalculator.buildNearMissReason(
       subscriberCount = 4_000L,
       shortCount = 15,
       medianViews = 3_000L,
-      multiplier = 120,
+      multiplier = 120.0,
       filters = defaultFilters
     )
     assertNull(passing)
@@ -251,7 +253,7 @@ class OutlierHunterUnitTests {
       hiddenSubscriberCount = false,
       views = 1_200_000L,
       channelMedianViews = 1_000L,
-      outlierMultiplier = 1200,
+      outlierMultiplier = 1200.0,
       viewsPerSub = 2400.0,
       likes = 85_000L,
       comments = 1_200L,

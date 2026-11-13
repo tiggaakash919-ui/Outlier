@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import com.example.data.local.AppDatabase
 import com.example.data.local.SavedOutlierEntity
+import com.example.domain.OutlierCalculator
 import com.example.domain.OutlierVideo
 import com.example.domain.ShortStatus
 import kotlinx.coroutines.flow.Flow
@@ -35,15 +36,19 @@ class SavedRepository(
         hiddenSubscriberCount = false,
         views = entity.views,
         channelMedianViews = entity.medianViews,
+        channelTrimmedMeanViews = entity.trimmedMeanViews,
+        channelP90Views = entity.p90Views,
         outlierMultiplier = entity.multiplier,
         viewsPerSub = entity.viewsPerSub,
         likes = entity.likes,
         comments = entity.comments,
         durationSeconds = entity.durationSeconds,
         publishedAt = entity.publishedAt,
+        othersAbove10xCount = entity.highMultiplierShortCount,
         shortStatus = parsedStatus,
         isSaved = true,
-        savedAt = entity.savedAt
+        savedAt = entity.savedAt,
+        isOneHitWonder = entity.isOneHitWonder
       )
     }
   }
@@ -75,7 +80,11 @@ class SavedRepository(
           description = video.description,
           isShort = video.shortStatus == ShortStatus.CONFIRMED_SHORT,
           shortStatus = video.shortStatus.name,
-          savedAt = now
+          savedAt = now,
+          trimmedMeanViews = video.channelTrimmedMeanViews,
+          p90Views = video.channelP90Views,
+          highMultiplierShortCount = video.othersAbove10xCount,
+          isOneHitWonder = video.isOneHitWonder
         )
       )
       return true
@@ -134,7 +143,7 @@ class SavedRepository(
           item.subscriberCount.toString(),
           item.views.toString(),
           item.channelMedianViews.toString(),
-          "${item.outlierMultiplier}x",
+          "${OutlierCalculator.formatMultiplier(item.outlierMultiplier)}x",
           viewsPerSubStr,
           item.likes.toString(),
           item.comments.toString(),

@@ -111,7 +111,7 @@ fun AiBottomSheet(
               color = MaterialTheme.colorScheme.onSurface
             )
             Text(
-              text = "Language: $aiLanguage · ${video.outlierMultiplier}x Outlier",
+              text = "Language: $aiLanguage · ${OutlierCalculator.formatMultiplier(video.outlierMultiplier)}x Outlier",
               fontSize = 12.sp,
               color = SecondaryCyan
             )
@@ -304,7 +304,7 @@ fun AiBottomSheet(
           // Copy All, Share & Close Row
           val fullReport = buildString {
             appendLine("Outlier Breakdown: ${video.title}")
-            appendLine("Channel: ${video.channelTitle} (${video.outlierMultiplier}x Outlier)")
+            appendLine("Channel: ${video.channelTitle} (${OutlierCalculator.formatMultiplier(video.outlierMultiplier)}x Outlier)")
             appendLine("\nWhy Viral:")
             analysis.whyViral.forEach { appendLine("- $it") }
             appendLine("\nHook Ideas:")

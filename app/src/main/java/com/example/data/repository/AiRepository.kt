@@ -159,7 +159,7 @@ class AiRepository(
 You are a YouTube Shorts growth analyst. Analyze this outlier Short using ONLY the metadata below.
 Do not claim to have watched it.
 Title: ${video.title} | Description (first 500 chars): $descTrimmed | Tags: $tagsStr
-Channel: ${video.channelTitle} (~$subsFormatted subs) | Views: $viewsFormatted | Channel median: $medianFormatted | Outlier: ${video.outlierMultiplier}x
+Channel: ${video.channelTitle} (~$subsFormatted subs) | Views: $viewsFormatted | Channel median: $medianFormatted | Outlier: ${OutlierCalculator.formatMultiplier(video.outlierMultiplier)}x
 Duration: ${video.durationSeconds}s | Uploaded: $uploadDate | Likes: ${video.likes} | Comments: ${video.comments}
 Respond in $language (Hinglish = Hindi-English mix, Roman script). Return JSON:
 {"whyViral":[3 points: hook, topic, emotion/curiosity],

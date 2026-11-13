@@ -8,6 +8,7 @@ import com.example.data.local.SettingsStore
 import com.example.data.remote.ShortsVerifier
 import com.example.data.remote.YouTubeApi
 import com.example.data.repository.AiRepository
+import com.example.data.repository.ApiKeyManager
 import com.example.data.repository.KeyRepository
 import com.example.data.repository.OutlierRepository
 import com.example.data.repository.QuotaTracker
@@ -79,8 +80,12 @@ class AppContainer(private val context: Context) {
     QuotaTracker(database)
   }
 
+  val apiKeyManager: ApiKeyManager by lazy {
+    ApiKeyManager(settingsStore, quotaTracker)
+  }
+
   val keyRepository: KeyRepository by lazy {
-    KeyRepository(youTubeApi, settingsStore, quotaTracker)
+    KeyRepository(youTubeApi, settingsStore, quotaTracker, apiKeyManager)
   }
 
   val outlierRepository: OutlierRepository by lazy {
@@ -89,6 +94,7 @@ class AppContainer(private val context: Context) {
       database = database,
       settingsStore = settingsStore,
       quotaTracker = quotaTracker,
+      apiKeyManager = apiKeyManager,
       shortsVerifier = shortsVerifier
     )
   }

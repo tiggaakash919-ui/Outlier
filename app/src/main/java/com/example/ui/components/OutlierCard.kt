@@ -162,7 +162,7 @@ fun OutlierCard(
                 .padding(horizontal = 8.dp, vertical = 3.dp)
             ) {
               Text(
-                text = "${video.outlierMultiplier}x 🔥",
+                text = "${OutlierCalculator.formatMultiplier(video.outlierMultiplier)}x 🔥",
                 color = badgeColor,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold
@@ -257,6 +257,24 @@ fun OutlierCard(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.Center
       ) {
+        // Composite 0-100 outlier score
+        SuggestionChip(
+          onClick = {},
+          label = {
+            Text(
+              text = "Score ${OutlierCalculator.calculateOutlierScore(video)}",
+              fontSize = 11.sp,
+              color = PrimaryViolet,
+              fontWeight = FontWeight.SemiBold
+            )
+          },
+          colors = SuggestionChipDefaults.suggestionChipColors(
+            containerColor = PrimaryViolet.copy(alpha = 0.12f)
+          ),
+          border = null,
+          modifier = Modifier.testTag("outlier_score_${video.videoId}")
+        )
+
         // Short Status Chip
         when (video.shortStatus) {
           ShortStatus.CONFIRMED_SHORT -> {
@@ -313,6 +331,18 @@ fun OutlierCard(
               border = null
             )
           }
+        }
+
+        // One-hit-wonder: huge spike with no other > 5x Short on the channel
+        if (video.isOneHitWonder) {
+          SuggestionChip(
+            onClick = {},
+            label = { Text("🎯 One-off spike", fontSize = 11.sp, color = PrimaryViolet) },
+            colors = SuggestionChipDefaults.suggestionChipColors(
+              containerColor = PrimaryViolet.copy(alpha = 0.12f)
+            ),
+            border = null
+          )
         }
 
         // Likes & Engagement Rate

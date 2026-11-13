@@ -103,8 +103,9 @@ fun DebugCard(
             "→ channels <5 Shorts (skipped): ${debugStats.channelsWithTooFewShorts}",
             "→ channels median > max (skipped): ${debugStats.channelsMedianTooHigh}",
             "→ channels with >=5 Shorts & median<=max: ${debugStats.channelsPassingMedian}   (UUSH: ${debugStats.uushCount} / uploads fallback: ${debugStats.uploadsFallbackCount})",
+            "→ negative cache hits (skipped): ${debugStats.negativeCacheHits}   (cost-skipped medians: ${debugStats.medianSkippedByCost})",
             "→ final outliers (>= minMultiplier): ${debugStats.finalOutliers}   (verified Shorts: ${debugStats.verifiedShorts})",
-            "Cost: search calls ${debugStats.pages} | videos.list ${debugStats.videosListCost} | channels.list ${debugStats.channelsListCost} | per-channel ${debugStats.perChannelCost} | main total ${debugStats.mainTotalCost} | cache hits ${debugStats.cacheHits}"
+            "Cost: search calls ${debugStats.pages} | videos.list ${debugStats.videosListCost} | channels.list ${debugStats.channelsListCost} | per-channel ${debugStats.perChannelCost} | main total ${debugStats.mainTotalCost} | channel cache hits ${debugStats.cacheHits} | video cache hits ${debugStats.videoStatsCacheHits}"
           )
 
           debugLines.forEach { line ->

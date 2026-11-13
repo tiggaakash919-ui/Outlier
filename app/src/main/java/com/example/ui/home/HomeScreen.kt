@@ -97,7 +97,8 @@ fun HomeScreen(
   }
 
   val nicheSuggestions = listOf("Tech", "Finance", "Motivation", "Facts", "Comedy", "Gaming", "Cooking")
-  val isQuotaBlocked = quotaStatus.isSearchExceeded || quotaStatus.isMainExceeded
+  // Rotation handles a single exhausted key; block only when every key is spent.
+  val isQuotaBlocked = !quotaStatus.hasUsableKey
 
   Column(
     modifier = modifier
@@ -150,7 +151,8 @@ fun HomeScreen(
           )
           Spacer(modifier = Modifier.width(10.dp))
           Text(
-            text = "Aaj ka YouTube API quota khatam ho gaya hai. Quota resets at ${quotaStatus.resetTimeLocal}.",
+            text = "Saari API keys ka aaj ka quota khatam ho gaya hai (${quotaStatus.keyCount} keys). " +
+              "Quota resets at ${quotaStatus.resetTimeLocal}.",
             fontSize = 13.sp,
             color = AccentRed,
             fontWeight = FontWeight.SemiBold
@@ -441,6 +443,25 @@ fun HomeScreen(
                   selected = filters.samplePerChannel == smp,
                   onClick = { onFiltersChange(filters.copy(samplePerChannel = smp)) },
                   label = { Text("$smp Shorts", fontSize = 12.sp) }
+                )
+              }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Baseline age: fresh Shorts are skipped from the channel baseline
+            Text(
+              text = "Baseline age (skip fresh Shorts): ${filters.minBaselineAgeHours}h",
+              fontSize = 13.sp,
+              color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              listOf(24 to "24h", 72 to "72h", 168 to "7d").forEach { (hrs, label) ->
+                ElevatedFilterChip(
+                  selected = filters.minBaselineAgeHours == hrs,
+                  onClick = { onFiltersChange(filters.copy(minBaselineAgeHours = hrs)) },
+                  label = { Text(label, fontSize = 12.sp) }
                 )
               }
             }

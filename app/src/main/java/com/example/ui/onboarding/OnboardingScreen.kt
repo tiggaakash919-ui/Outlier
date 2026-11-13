@@ -113,6 +113,10 @@ fun OnboardingScreen(
           Toast.makeText(context, "Key sahi hai, par aaj ka quota khatam. Kal reset hoga.", Toast.LENGTH_LONG).show()
           onConnected()
         }
+        is KeyValidationResult.LimitReached -> {
+          isLoading = false
+          errorMessage = "Maximum 5 API keys allowed"
+        }
         is KeyValidationResult.Error -> {
           isLoading = false
           errorMessage = result.userMessage

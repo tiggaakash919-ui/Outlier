@@ -7,6 +7,7 @@ enum class ShortStatus {
 }
 
 enum class SortOption(val label: String) {
+  SCORE("Score"),
   MULTIPLIER("Multiplier"),
   VIEWS("Views"),
   NEWEST("Newest"),
@@ -26,15 +27,20 @@ data class OutlierVideo(
   val hiddenSubscriberCount: Boolean,
   val views: Long,
   val channelMedianViews: Long,
-  val outlierMultiplier: Int,
+  val channelTrimmedMeanViews: Long = 0L,
+  val channelP90Views: Long = 0L,
+  val outlierMultiplier: Double,
   val viewsPerSub: Double,
   val likes: Long,
   val comments: Long,
   val durationSeconds: Long,
   val publishedAt: String,
+  val othersAbove5xCount: Int = 0,
+  val othersAbove10xCount: Int = 0,
   val shortStatus: ShortStatus = ShortStatus.UNVERIFIED,
   val isSaved: Boolean = false,
-  val savedAt: Long = 0L
+  val savedAt: Long = 0L,
+  val isOneHitWonder: Boolean = false
 )
 
 data class NearMissVideo(
@@ -47,7 +53,7 @@ data class NearMissVideo(
   val subscriberCount: Long,
   val hiddenSubscriberCount: Boolean = false,
   val medianViews: Long? = null,
-  val multiplier: Int? = null,
+  val multiplier: Double? = null,
   val reasonChip: String,
   val stagePriority: Int = 0
 )
@@ -96,6 +102,7 @@ data class FilterOptions(
   val maxMedianViews: Long = 5_000L,
   val minMultiplier: Int = 50,
   val samplePerChannel: Int = 50,
+  val minBaselineAgeHours: Int = 72, // fresh Shorts are excluded from the baseline until views mature
   val recency: String = "90d", // 7d, 30d, 90d, 6mo, 1y, any
   val regionCode: String = "IN", // IN, US, Any
   val language: String = "Any", // Hindi, English, Any
@@ -180,8 +187,23 @@ data class DebugStats(
   val channelsListCost: Int = 0,
   val perChannelCost: Int = 0,
   val mainTotalCost: Int = 0,
-  val cacheHits: Int = 0
+  val cacheHits: Int = 0,
+  val negativeCacheHits: Int = 0,
+  val videoStatsCacheHits: Int = 0,
+  val medianSkippedByCost: Int = 0
 )
+
+/** Per-key quota usage, used by the key list in Settings. */
+data class KeyQuotaUsage(
+  val index: Int = 0,
+  val searchCalls: Int = 0,
+  val mainUnits: Int = 0,
+  val isSearchExceeded: Boolean = false,
+  val isMainExceeded: Boolean = false
+) {
+  val isExhausted: Boolean
+    get() = isSearchExceeded || isMainExceeded
+}
 
 data class QuotaStatus(
   val searchCalls: Int = 0,
@@ -190,8 +212,25 @@ data class QuotaStatus(
   val mainLimit: Int = 10_000,
   val isSearchExceeded: Boolean = false,
   val isMainExceeded: Boolean = false,
-  val resetTimeLocal: String = ""
+  val resetTimeLocal: String = "",
+  val activeKeyIndex: Int = 0,
+  val keyCount: Int = 0,
+  val keyUsages: List<KeyQuotaUsage> = emptyList(),
+  val hasUsableKey: Boolean = true
 ) {
   val badgeText: String
-    get() = "Search $searchCalls/$searchLimit · Units $mainUnits/$mainLimit"
+    get() {
+      val keyPart = if (keyCount > 0) " · Key ${activeKeyIndex + 1}/$keyCount" else ""
+      return "$mainUnits / $mainLimit units · Search $searchCalls/$searchLimit$keyPart"
+    }
+
+  val isActiveKeyExhausted: Boolean
+    get() = isSearchExceeded || isMainExceeded
 }
+
+/** A masked API key row for the Settings screen. */
+data class ApiKeyUi(
+  val index: Int = 0,
+  val masked: String = "",
+  val isActive: Boolean = false
+)

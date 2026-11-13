@@ -121,13 +121,27 @@ data class PlaylistItemListResponse(
 
 @JsonClass(generateAdapter = true)
 data class PlaylistItem(
+  val snippet: PlaylistItemSnippet? = null,
   val contentDetails: PlaylistItemContentDetails? = null
 )
 
 @JsonClass(generateAdapter = true)
-data class PlaylistItemContentDetails(
-  val videoId: String? = null
+data class PlaylistItemSnippet(
+  val title: String? = null,
+  val publishedAt: String? = null
 )
+
+@JsonClass(generateAdapter = true)
+data class PlaylistItemContentDetails(
+  val videoId: String? = null,
+  val videoPublishedAt: String? = null
+) {
+  /** The playlist item's own publish date is the most reliable one. */
+  fun bestPublishedAt(snippetPublishedAt: String?): String? {
+    return videoPublishedAt?.takeIf { it.isNotBlank() }
+      ?: snippetPublishedAt?.takeIf { it.isNotBlank() }
+  }
+}
 
 @JsonClass(generateAdapter = true)
 data class GoogleErrorEnvelope(

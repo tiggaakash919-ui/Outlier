@@ -90,6 +90,7 @@ import com.example.domain.EmptyStageReason
 import com.example.domain.NearMissVideo
 import com.example.domain.OutlierCalculator
 import com.example.domain.OutlierVideo
+import com.example.domain.QuotaStatus
 import com.example.domain.ShortStatus
 import com.example.domain.SortOption
 import com.example.ui.components.DebugCard
@@ -112,6 +113,7 @@ fun ResultsScreen(
   isLoading: Boolean,
   progressMessage: String?,
   nextPageToken: String?,
+  quotaStatus: QuotaStatus = QuotaStatus(),
   onLoadMore: () -> Unit,
   onTryMore: (String) -> Unit, // variant or time slice
   onLoosenFilters: () -> Unit,
@@ -126,7 +128,7 @@ fun ResultsScreen(
   val coroutineScope = rememberCoroutineScope()
   val trimmedKeyword = remember(keyword) { OutlierCalculator.trimKeyword(keyword) }
 
-  var selectedSort by remember { mutableStateOf(SortOption.MULTIPLIER) }
+  var selectedSort by remember { mutableStateOf(SortOption.SCORE) }
   var showNonShorts by remember { mutableStateOf(false) }
   var showDisclaimer by remember { mutableStateOf(true) }
   var showTryMoreDialog by remember { mutableStateOf(false) }
@@ -139,6 +141,7 @@ fun ResultsScreen(
         list = list.filter { it.shortStatus != ShortStatus.NOT_A_SHORT }
       }
       when (selectedSort) {
+        SortOption.SCORE -> list.sortedByDescending { OutlierCalculator.calculateOutlierScore(it) }
         SortOption.MULTIPLIER -> list.sortedByDescending { it.outlierMultiplier }
         SortOption.VIEWS -> list.sortedByDescending { it.views }
         SortOption.NEWEST -> list.sortedByDescending { it.publishedAt }
@@ -511,13 +514,18 @@ fun ResultsScreen(
             if (!nextPageToken.isNullOrBlank()) {
               Button(
                 onClick = onLoadMore,
+                enabled = quotaStatus.hasUsableKey,
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = PrimaryViolet),
                 modifier = Modifier.weight(1f).testTag("load_more_button")
               ) {
                 Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Load more", fontSize = 14.sp, color = Color.White)
+                Text(
+                  if (quotaStatus.hasUsableKey) "Load more" else "Quota khatam",
+                  fontSize = 14.sp,
+                  color = Color.White
+                )
               }
             }
 
@@ -717,7 +725,7 @@ private fun NearMissesSection(
                     )
                   }
 
-                  if (item.multiplier != null && item.multiplier > 0) {
+                  if (item.multiplier != null && item.multiplier > 0.0) {
                     Box(
                       modifier = Modifier
                         .clip(RoundedCornerShape(6.dp))
@@ -725,7 +733,7 @@ private fun NearMissesSection(
                         .padding(horizontal = 6.dp, vertical = 3.dp)
                     ) {
                       Text(
-                        text = "${item.multiplier}x",
+                        text = "${OutlierCalculator.formatMultiplier(item.multiplier)}x",
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         color = BadgeYellow

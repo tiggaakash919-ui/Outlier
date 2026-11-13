@@ -7,6 +7,7 @@ import com.example.ui.theme.BadgeYellow
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.Locale
+import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -19,9 +20,22 @@ enum class BadgeTier {
 object OutlierCalculator {
   fun trimKeyword(raw: String): String = raw.trim()
 
-  fun calculateMultiplier(viralViews: Long, medianViews: Long): Int {
-    if (medianViews <= 0) return 0
-    return (viralViews.toDouble() / medianViews.toDouble()).roundToInt()
+  fun calculateMultiplier(viralViews: Long, medianViews: Long): Double {
+    if (medianViews <= 0) return 0.0
+    return viralViews.toDouble() / medianViews.toDouble()
+  }
+
+  /**
+   * Renders a multiplier for display: one decimal under 10x ("8.5"), whole numbers
+   * from 10x up ("1200"). The "x" suffix is added by callers.
+   */
+  fun formatMultiplier(multiplier: Double): String {
+    if (!multiplier.isFinite() || multiplier <= 0.0) return "0"
+    return if (multiplier < 10.0) {
+      String.format(Locale.US, "%.1f", multiplier)
+    } else {
+      multiplier.roundToInt().toString()
+    }
   }
 
   fun calculateViewsPerSub(viralViews: Long, subscriberCount: Long): Double {
@@ -113,19 +127,129 @@ object OutlierCalculator {
     }
   }
 
-  fun getBadgeTier(multiplier: Int): BadgeTier {
+  fun getBadgeTier(multiplier: Double): BadgeTier {
     return when {
-      multiplier >= 500 -> BadgeTier.MEGA
-      multiplier >= 50 -> BadgeTier.HIGH
+      multiplier >= 500.0 -> BadgeTier.MEGA
+      multiplier >= 50.0 -> BadgeTier.HIGH
       else -> BadgeTier.LOW
     }
   }
 
-  fun getBadgeColor(multiplier: Int): Color {
+  fun getBadgeColor(multiplier: Double): Color {
     return when (getBadgeTier(multiplier)) {
       BadgeTier.MEGA -> BadgeGreen
       BadgeTier.HIGH -> BadgeYellow
       BadgeTier.LOW -> BadgeGray
+    }
+  }
+
+  /** True when a >= 20x spike is not backed by any other > 5x Short on the channel. */
+  fun isOneHitWonder(multiplier: Double, othersAbove5xCount: Int): Boolean {
+    return multiplier >= 20.0 && othersAbove5xCount == 0
+  }
+
+  /**
+   * Composite 0-100 quality score for an outlier Short.
+   *
+   * Weights (total 100):
+   *  - multiplier   40  -> log10(m) / log10(1000), i.e. 1000x saturates
+   *  - viewsPerSub  20  -> log10(1 + vps) / log10(101), i.e. 100x subs saturates
+   *  - recency      20  -> 7d = 1.0, 30d = 0.8, 90d = 0.6, 180d = 0.4, older = 0.2
+   *  - engagement   20  -> (likes + comments) / views over a 0-8% band
+   *
+   * Consistency penalty (subtracted, max -20):
+   *  - other Shorts above 10x median (many hits = a growing channel, not a discovery)
+   *  - p90 far above the median (the channel routinely spikes, so a "median" is not
+   *    a representative baseline for it)
+   */
+  fun calculateOutlierScore(
+    multiplier: Double,
+    viewsPerSub: Double,
+    publishedAt: String,
+    views: Long,
+    likes: Long,
+    comments: Long,
+    othersAbove10xCount: Int,
+    channelMedianViews: Long = 0L,
+    channelP90Views: Long = 0L,
+    now: Instant = Instant.now()
+  ): Int {
+    val multiplierPart = (
+      log10(max(multiplier, 1.0)) / log10(1000.0)
+      ).coerceIn(0.0, 1.0) * 40.0
+
+    val viewsPerSubPart = (
+      log10(1.0 + max(viewsPerSub, 0.0)) / log10(101.0)
+      ).coerceIn(0.0, 1.0) * 20.0
+
+    val recencyPart = recencyFactor(publishedAt, now) * 20.0
+
+    val engagementRate = if (views > 0L) {
+      (likes.coerceAtLeast(0L) + comments.coerceAtLeast(0L)).toDouble() / views.toDouble()
+    } else {
+      0.0
+    }
+    val engagementPart = (engagementRate / 0.08).coerceIn(0.0, 1.0) * 20.0
+
+    val countPenalty = when {
+      othersAbove10xCount <= 0 -> 0.0
+      othersAbove10xCount <= 2 -> 5.0
+      othersAbove10xCount <= 5 -> 10.0
+      else -> 15.0
+    }
+
+    // A channel whose 90th percentile towers over its median is routinely going
+    // viral, so its "median" is not a trustworthy baseline for this Short.
+    val p90Ratio = if (channelMedianViews > 0L && channelP90Views > 0L) {
+      channelP90Views.toDouble() / channelMedianViews.toDouble()
+    } else {
+      0.0
+    }
+    val spreadPenalty = when {
+      p90Ratio >= 20.0 -> 10.0
+      p90Ratio >= 5.0 -> 5.0
+      else -> 0.0
+    }
+
+    val penalty = (countPenalty + spreadPenalty).coerceAtMost(20.0)
+
+    val raw = multiplierPart + viewsPerSubPart + recencyPart + engagementPart - penalty
+    return raw.coerceIn(0.0, 100.0).roundToInt()
+  }
+
+  /**
+   * Score computed on demand from a result row (not persisted), so it stays correct
+   * as recency decays and never leaks into the cached JSON.
+   */
+  fun calculateOutlierScore(video: OutlierVideo, now: Instant = Instant.now()): Int {
+    return calculateOutlierScore(
+      multiplier = video.outlierMultiplier,
+      viewsPerSub = video.viewsPerSub,
+      publishedAt = video.publishedAt,
+      views = video.views,
+      likes = video.likes,
+      comments = video.comments,
+      othersAbove10xCount = video.othersAbove10xCount,
+      channelMedianViews = video.channelMedianViews,
+      channelP90Views = video.channelP90Views,
+      now = now
+    )
+  }
+
+  /** 1.0 for a fresh Short down to 0.2 for anything older than 180 days. */
+  fun recencyFactor(publishedAt: String, now: Instant = Instant.now()): Double {
+    if (publishedAt.isBlank()) return 0.2
+    return try {
+      val days = max(0L, ChronoUnit.DAYS.between(Instant.parse(publishedAt), now))
+      when {
+        days <= 7L -> 1.0
+        days <= 30L -> 0.8
+        days <= 90L -> 0.6
+        days <= 180L -> 0.4
+        else -> 0.2
+      }
+    } catch (_: Exception) {
+      0.2
     }
   }
 
@@ -244,7 +368,7 @@ object OutlierCalculator {
     hiddenSubscribers: Boolean = false,
     shortCount: Int?,
     medianViews: Long?,
-    multiplier: Int?,
+    multiplier: Double?,
     filters: FilterOptions
   ): String? {
     val isFullRangeSubs = filters.minSubs <= 0L && filters.maxSubs >= 100_000L
@@ -265,7 +389,7 @@ object OutlierCalculator {
     }
     val actualMultiplier = multiplier ?: calculateMultiplier(0L, medianViews)
     if (actualMultiplier < filters.minMultiplier) {
-      return "Multiplier ${actualMultiplier}x < ${filters.minMultiplier}x"
+      return "Multiplier ${formatMultiplier(actualMultiplier)}x < ${filters.minMultiplier}x"
     }
     return null
   }

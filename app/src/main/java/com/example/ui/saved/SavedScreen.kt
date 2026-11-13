@@ -221,7 +221,7 @@ fun SavedScreen(
 
         // Search within saved items & Summary Insights Bar
         if (savedList.isNotEmpty()) {
-          val avgMultiplier = savedList.map { it.outlierMultiplier }.average().toInt()
+          val avgMultiplier = savedList.map { it.outlierMultiplier }.average()
           val maxViews = savedList.maxOfOrNull { it.views } ?: 0L
           val minSubs = savedList.minOfOrNull { it.subscriberCount } ?: 0L
 
@@ -237,7 +237,7 @@ fun SavedScreen(
               horizontalArrangement = Arrangement.SpaceEvenly
             ) {
               Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("${avgMultiplier}x", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = PrimaryViolet)
+                Text("${com.example.domain.OutlierCalculator.formatMultiplier(avgMultiplier)}x", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = PrimaryViolet)
                 Text("Avg Multiplier", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
               }
               Column(horizontalAlignment = Alignment.CenterHorizontally) {

@@ -19,6 +19,8 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.TrendingUp
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -26,6 +28,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -43,6 +46,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.domain.CostEstimate
 import com.example.domain.OutlierVideo
 import com.example.ui.MainViewModel
 import com.example.ui.Screen
@@ -128,6 +132,7 @@ class MainActivity : ComponentActivity() {
       savedRepository = appContainer.savedRepository,
       aiRepository = appContainer.aiRepository,
       quotaTracker = appContainer.quotaTracker,
+      apiKeyManager = appContainer.apiKeyManager,
       settingsStore = appContainer.settingsStore,
       database = appContainer.database
     )
@@ -214,6 +219,8 @@ fun MainAppContent(
   val nextPageToken by viewModel.nextPageToken.collectAsStateWithLifecycle()
   val savedOutliers by viewModel.savedOutliers.collectAsStateWithLifecycle()
   val maskedKey by viewModel.maskedKey.collectAsStateWithLifecycle()
+  val apiKeys by viewModel.apiKeys.collectAsStateWithLifecycle()
+  val costEstimate by viewModel.costEstimate.collectAsStateWithLifecycle()
   val geminiModel by viewModel.geminiModel.collectAsStateWithLifecycle()
   val aiLanguage by viewModel.aiLanguage.collectAsStateWithLifecycle()
   val uiLanguage by viewModel.uiLanguage.collectAsStateWithLifecycle()
@@ -341,6 +348,7 @@ fun MainAppContent(
             isLoading = isSearching,
             progressMessage = progressMessage,
             nextPageToken = nextPageToken,
+            quotaStatus = quotaStatus,
             onLoadMore = { viewModel.loadMore() },
             onTryMore = { viewModel.tryMore(it) },
             onLoosenFilters = { viewModel.loosenFilters() },
@@ -359,6 +367,7 @@ fun MainAppContent(
         composable(ROUTE_SETTINGS) {
           SettingsScreen(
             maskedKey = maskedKey,
+            apiKeys = apiKeys,
             quotaStatus = quotaStatus,
             geminiModel = geminiModel,
             aiLanguage = aiLanguage,
@@ -371,7 +380,7 @@ fun MainAppContent(
             onThemeModeChange = { viewModel.setThemeMode(it) },
             onClearCache = { viewModel.clearCache() },
             onClearAllData = { viewModel.clearAllData() },
-            onKeyRemoved = { viewModel.refreshMaskedKey() }
+            onKeysChanged = { viewModel.refreshKeys() }
           )
         }
       }
@@ -391,5 +400,46 @@ fun MainAppContent(
         }
       )
     }
+
+    // Estimated-cost confirmation before the per-channel stage.
+    val estimate = costEstimate
+    if (estimate != null) {
+      CostConfirmationDialog(
+        estimate = estimate,
+        onDecision = { viewModel.confirmCost(it) }
+      )
+    }
   }
+}
+
+@Composable
+private fun CostConfirmationDialog(
+  estimate: CostEstimate,
+  onDecision: (Boolean) -> Unit
+) {
+  AlertDialog(
+    onDismissRequest = { onDecision(false) },
+    title = { Text("Zyada API units lag sakte hain") },
+    text = {
+      Text(
+        "Is search me ~${estimate.estimatedUnits} units lag sakte hain " +
+          "(${estimate.uncachedChannels} naye channels). " +
+          "Bache hue main units: ${estimate.remainingUnits}.\n\nAage badhein?"
+      )
+    },
+    confirmButton = {
+      Button(onClick = { onDecision(true) }, modifier = Modifier.testTag("cost_confirm_button")) {
+        Text("Haan, continue")
+      }
+    },
+    dismissButton = {
+      TextButton(
+        onClick = { onDecision(false) },
+        modifier = Modifier.testTag("cost_cancel_button")
+      ) {
+        Text("Nahi, cached results")
+      }
+    },
+    modifier = Modifier.testTag("cost_confirm_dialog")
+  )
 }

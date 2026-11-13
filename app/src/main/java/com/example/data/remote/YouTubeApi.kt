@@ -38,7 +38,7 @@ interface YouTubeApi {
 
   @GET("playlistItems")
   suspend fun getPlaylistItems(
-    @Query("part") part: String = "contentDetails",
+    @Query("part") part: String = "contentDetails,snippet",
     @Query("playlistId") playlistId: String,
     @Query("maxResults") maxResults: Int = 50,
     @Query("pageToken") pageToken: String? = null,

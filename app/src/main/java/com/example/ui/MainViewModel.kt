@@ -7,12 +7,15 @@ import com.example.data.local.AppDatabase
 import com.example.data.local.SettingsStore
 import com.example.data.repository.AiRepository
 import com.example.data.repository.AiResult
+import com.example.data.repository.ApiKeyManager
 import com.example.data.repository.KeyRepository
 import com.example.data.repository.OutlierRepository
 import com.example.data.repository.QuotaTracker
 import com.example.data.repository.SavedRepository
 import com.example.data.repository.SearchResult
 import com.example.domain.AiUiState
+import com.example.domain.ApiKeyUi
+import com.example.domain.CostEstimate
 import com.example.domain.DebugStats
 import com.example.domain.EmptyStageReason
 import com.example.domain.FilterOptions
@@ -22,6 +25,7 @@ import com.example.domain.OutlierVideo
 import com.example.domain.PresetType
 import com.example.domain.Presets
 import com.example.domain.QuotaStatus
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -45,6 +49,7 @@ class MainViewModel(
   private val savedRepository: SavedRepository,
   private val aiRepository: AiRepository,
   private val quotaTracker: QuotaTracker,
+  private val apiKeyManager: ApiKeyManager,
   private val settingsStore: SettingsStore,
   private val database: AppDatabase
 ) : ViewModel() {
@@ -52,8 +57,21 @@ class MainViewModel(
   val hasApiKey: StateFlow<Boolean> = settingsStore.hasApiKey
     .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
-  val quotaStatus: StateFlow<QuotaStatus> = quotaTracker.getQuotaStatusFlow()
+  val quotaStatus: StateFlow<QuotaStatus> = quotaTracker
+    .getQuotaStatusFlow(
+      fingerprintsFlow = settingsStore.apiKeyFingerprints,
+      activeIndexFlow = settingsStore.activeKeyIndex
+    )
     .stateIn(viewModelScope, SharingStarted.Eagerly, QuotaStatus())
+
+  private val _apiKeys = MutableStateFlow<List<ApiKeyUi>>(emptyList())
+  val apiKeys: StateFlow<List<ApiKeyUi>> = _apiKeys.asStateFlow()
+
+  /** Non-null while the "this will cost ~X units" dialog is waiting for an answer. */
+  private val _costEstimate = MutableStateFlow<CostEstimate?>(null)
+  val costEstimate: StateFlow<CostEstimate?> = _costEstimate.asStateFlow()
+
+  private var costConfirmation: CompletableDeferred<Boolean>? = null
 
   val savedOutliers: StateFlow<List<OutlierVideo>> = savedRepository.savedOutliersFlow
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -112,12 +130,39 @@ class MainViewModel(
 
   init {
     refreshMaskedKey()
+    viewModelScope.launch {
+      apiKeyManager.notices.collect { notice ->
+        // Refresh first: emitting can suspend until the UI collector is ready.
+        _apiKeys.value = keyRepository.getMaskedKeys()
+        _maskedKey.value = keyRepository.getMaskedKey()
+        _userMessages.emit(notice)
+      }
+    }
   }
 
   fun refreshMaskedKey() {
     viewModelScope.launch {
       _maskedKey.value = keyRepository.getMaskedKey()
+      _apiKeys.value = keyRepository.getMaskedKeys()
     }
+  }
+
+  /** Called by Settings after adding/removing/switching a key. */
+  fun refreshKeys() = refreshMaskedKey()
+
+  /** Answer to the cost-confirmation dialog. */
+  fun confirmCost(proceed: Boolean) {
+    _costEstimate.value = null
+    val deferred = costConfirmation
+    costConfirmation = null
+    deferred?.complete(proceed)
+  }
+
+  private suspend fun requestCostConfirmation(estimate: CostEstimate): Boolean {
+    val deferred = CompletableDeferred<Boolean>()
+    costConfirmation = deferred
+    _costEstimate.value = estimate
+    return deferred.await()
   }
 
   fun clearOnboardingError() {
@@ -133,6 +178,7 @@ class MainViewModel(
   }
 
   fun startSearch(forceRefresh: Boolean = false) {
+    if (_isSearching.value) return
     val trimmedFilters = _filters.value.withTrimmedKeyword()
     _filters.value = trimmedFilters
     val kw = trimmedFilters.keyword
@@ -147,7 +193,13 @@ class MainViewModel(
     _currentScreen.value = Screen.RESULTS
 
     viewModelScope.launch {
-      when (val result = outlierRepository.searchOutliers(trimmedFilters, forceRefresh = forceRefresh)) {
+      when (
+        val result = outlierRepository.searchOutliers(
+          trimmedFilters,
+          forceRefresh = forceRefresh,
+          onConfirmCost = { requestCostConfirmation(it) }
+        )
+      ) {
         is SearchResult.Success -> {
           _outliers.value = result.outliers
           _nearMisses.value = result.nearMisses
@@ -168,13 +220,20 @@ class MainViewModel(
   }
 
   fun loadMore() {
+    if (_isSearching.value) return
     val token = _nextPageToken.value ?: return
     val trimmedFilters = _filters.value.withTrimmedKeyword()
     _filters.value = trimmedFilters
     _isSearching.value = true
 
     viewModelScope.launch {
-      when (val result = outlierRepository.searchOutliers(trimmedFilters, pageToken = token)) {
+      when (
+        val result = outlierRepository.searchOutliers(
+          trimmedFilters,
+          pageToken = token,
+          onConfirmCost = { requestCostConfirmation(it) }
+        )
+      ) {
         is SearchResult.Success -> {
           // Merge and deduplicate by videoId
           val existingIds = _outliers.value.map { it.videoId }.toSet()
@@ -198,6 +257,7 @@ class MainViewModel(
   }
 
   fun tryMore(variantOrSlice: String) {
+    if (_isSearching.value) return
     val isSlice = variantOrSlice in listOf("7d", "30d", "90d", "6mo")
     val updatedFilters = if (isSlice) {
       _filters.value.copy(recency = variantOrSlice).withTrimmedKeyword()
@@ -208,7 +268,13 @@ class MainViewModel(
 
     _isSearching.value = true
     viewModelScope.launch {
-      when (val result = outlierRepository.searchOutliers(updatedFilters, forceRefresh = false)) {
+      when (
+        val result = outlierRepository.searchOutliers(
+          updatedFilters,
+          forceRefresh = false,
+          onConfirmCost = { requestCostConfirmation(it) }
+        )
+      ) {
         is SearchResult.Success -> {
           // Merge the new results and deduplicate by videoId (Section 4)
           val existingMap = _outliers.value.associateBy { it.videoId }.toMutableMap()
@@ -334,18 +400,22 @@ class MainViewModel(
   }
 
   fun clearCache() {
-    viewModelScope.launch {
-      database.searchCacheDao().clearSearchCache()
-      database.channelCacheDao().clearChannelCache()
-      database.shortVerificationDao().clearShortVerificationCache()
-      database.aiCacheDao().clearAiCache()
-    }
+    viewModelScope.launch { clearCacheInternal() }
+  }
+
+  private suspend fun clearCacheInternal() {
+    database.searchCacheDao().clearSearchCache()
+    database.channelCacheDao().clearChannelCache()
+    database.videoStatsDao().clearVideoStats()
+    database.shortVerificationDao().clearShortVerificationCache()
+    database.aiCacheDao().clearAiCache()
   }
 
   fun clearAllData() {
     viewModelScope.launch {
-      clearCache()
+      clearCacheInternal()
       savedRepository.clearAll()
+      database.quotaDao().clearQuota()
       settingsStore.clearAll()
       refreshMaskedKey()
     }
@@ -357,6 +427,7 @@ class MainViewModel(
     private val savedRepository: SavedRepository,
     private val aiRepository: AiRepository,
     private val quotaTracker: QuotaTracker,
+    private val apiKeyManager: ApiKeyManager,
     private val settingsStore: SettingsStore,
     private val database: AppDatabase
   ) : ViewModelProvider.Factory {
@@ -368,6 +439,7 @@ class MainViewModel(
         savedRepository,
         aiRepository,
         quotaTracker,
+        apiKeyManager,
         settingsStore,
         database
       ) as T
