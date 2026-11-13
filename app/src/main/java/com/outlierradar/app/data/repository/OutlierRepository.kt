@@ -1057,7 +1057,7 @@ class OutlierRepository(
    * fetching only the stale/missing ones. Throws [AbortSearchException] on a
    * quota or key error so the caller can rotate the key.
    */
-  internal suspend fun fetchVideoDetails(
+  private suspend fun fetchVideoDetails(
     videoIds: List<String>,
     key: ActiveKey,
     onUnitsUsed: (Int) -> Unit = {},
@@ -1112,7 +1112,7 @@ class OutlierRepository(
     return result
   }
 
-  internal suspend fun fetchChannelMedian(
+  private suspend fun fetchChannelMedian(
     channelId: String,
     uploadsPlaylistId: String?,
     viralVideoIds: Set<String>,
@@ -1228,7 +1228,7 @@ class OutlierRepository(
    * Records quota for [response] on the bucket it belongs to and returns a
    * user-facing error when the call failed.
    */
-  internal suspend fun handleResponse(
+  private suspend fun handleResponse(
     response: Response<*>,
     key: ActiveKey,
     bucket: QuotaBucket
@@ -1322,7 +1322,7 @@ class OutlierRepository(
     return DateTimeFormatter.ISO_INSTANT.format(targetInstant)
   }
 
-  internal suspend fun <T> executeWithRetry(
+  private suspend fun <T> executeWithRetry(
     maxRetries: Int = 1,
     initialDelayMs: Long = 1000L,
     block: suspend () -> Response<T>
