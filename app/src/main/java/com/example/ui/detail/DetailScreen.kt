@@ -162,7 +162,7 @@ fun DetailScreen(
           Text(video.title, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
           Spacer(modifier = Modifier.height(4.dp))
           Text(
-            "${video.channelTitle} • ${OutlierCalculator.formatNumber(video.views)} views • ${OutlierCalculator.formatMultiplier(video.outlierMultiplier)}x",
+            "${video.channelTitle} • ${OutlierCalculator.formatCompactNumber(video.views)} views • ${OutlierCalculator.formatMultiplier(video.outlierMultiplier)}x",
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
           )
@@ -239,7 +239,7 @@ private fun VelocityCard(velocity: VelocityState, snapshots: List<ViewSnapshotEn
       Text("Real velocity", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
       Text(velocity.label, color = color, fontWeight = FontWeight.Bold, fontSize = 16.sp)
       Text(
-        "Views gained in last 24h: ${OutlierCalculator.formatNumber(velocity.viewsGained24h)}",
+        "Views gained in last 24h: ${OutlierCalculator.formatCompactNumber(velocity.viewsGained24h)}",
         fontSize = 13.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant
       )
@@ -251,9 +251,9 @@ private fun VelocityCard(velocity: VelocityState, snapshots: List<ViewSnapshotEn
       }
       Text(accelText, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
       Text(
-        "Latest: ${OutlierCalculator.formatNumber(velocity.latestViews)} views • " +
-          "${OutlierCalculator.formatNumber(velocity.latestLikes)} likes • " +
-          "${OutlierCalculator.formatNumber(velocity.latestComments)} comments",
+        "Latest: ${OutlierCalculator.formatCompactNumber(velocity.latestViews)} views • " +
+          "${OutlierCalculator.formatCompactNumber(velocity.latestLikes)} likes • " +
+          "${OutlierCalculator.formatCompactNumber(velocity.latestComments)} comments",
         fontSize = 12.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant
       )
