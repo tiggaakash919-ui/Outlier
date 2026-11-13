@@ -6,6 +6,7 @@ object CacheTtl {
   const val CHANNEL_MEDIAN_MS = 72L * 60L * 60L * 1000L // 72h
   const val VIDEO_STATS_MS = 6L * 60L * 60L * 1000L     // 6h
   const val SEARCH_RESULTS_MS = 24L * 60L * 60L * 1000L // 24h
+  const val NICHE_MS = 30L * 24L * 60L * 60L * 1000L   // 30d (AI niche keywords)
 
   /**
    * Failed channels (too few Shorts, playlist missing, deleted channel) are

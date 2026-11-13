@@ -15,9 +15,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     VideoStatsCacheEntity::class,
     ShortVerificationCacheEntity::class,
     SavedOutlierEntity::class,
-    AiCacheEntity::class
+    AiCacheEntity::class,
+    NicheCacheEntity::class
   ],
-  version = 5,
+  version = 6,
   exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -28,6 +29,7 @@ abstract class AppDatabase : RoomDatabase() {
   abstract fun shortVerificationDao(): ShortVerificationDao
   abstract fun savedOutlierDao(): SavedOutlierDao
   abstract fun aiCacheDao(): AiCacheDao
+  abstract fun nicheCacheDao(): NicheCacheDao
 
   companion object {
     @Volatile
@@ -238,6 +240,26 @@ abstract class AppDatabase : RoomDatabase() {
       }
     }
 
+    /**
+     * v5 -> v6: Gemini micro-niche keyword cache for AUTO_EXPAND.
+     */
+    val MIGRATION_5_6 = object : Migration(5, 6) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+          """
+          CREATE TABLE IF NOT EXISTS `niche_cache` (
+            `cacheKey` TEXT NOT NULL,
+            `keyword` TEXT NOT NULL,
+            `language` TEXT NOT NULL,
+            `keywordsJson` TEXT NOT NULL,
+            `timestamp` INTEGER NOT NULL,
+            PRIMARY KEY(`cacheKey`)
+          )
+          """.trimIndent()
+        )
+      }
+    }
+
     fun getDatabase(context: Context): AppDatabase {
       return INSTANCE ?: synchronized(this) {
         val instance = Room.databaseBuilder(
@@ -245,7 +267,7 @@ abstract class AppDatabase : RoomDatabase() {
           AppDatabase::class.java,
           "outlier_radar_database"
         )
-          .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+          .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
           .build()
         INSTANCE = instance
         instance

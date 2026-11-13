@@ -203,3 +203,15 @@ interface AiCacheDao {
   @Query("DELETE FROM ai_cache")
   suspend fun clearAiCache()
 }
+
+@Dao
+interface NicheCacheDao {
+  @Query("SELECT * FROM niche_cache WHERE cacheKey = :cacheKey")
+  suspend fun getNicheCache(cacheKey: String): NicheCacheEntity?
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun insertNicheCache(entity: NicheCacheEntity)
+
+  @Query("DELETE FROM niche_cache")
+  suspend fun clearNicheCache()
+}

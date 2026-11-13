@@ -213,6 +213,8 @@ fun MainAppContent(
   val isSearching by viewModel.isSearching.collectAsStateWithLifecycle()
   val progressMessage by viewModel.progressMessage.collectAsStateWithLifecycle()
   val recentSearches by viewModel.recentSearches.collectAsStateWithLifecycle()
+  val expandedKeywords by viewModel.expandedKeywords.collectAsStateWithLifecycle()
+  val isExpandingKeywords by viewModel.isExpandingKeywords.collectAsStateWithLifecycle()
   val outliers by viewModel.outliers.collectAsStateWithLifecycle()
   val nearMisses by viewModel.nearMisses.collectAsStateWithLifecycle()
   val debugStats by viewModel.debugStats.collectAsStateWithLifecycle()
@@ -335,6 +337,9 @@ fun MainAppContent(
             isSearching = isSearching,
             progressMessage = progressMessage,
             recentSearches = recentSearches,
+            expandedKeywords = expandedKeywords,
+            isExpandingKeywords = isExpandingKeywords,
+            onExpandKeywords = { viewModel.expandKeywordsNow() },
             onFiltersChange = { viewModel.updateFilters(it) },
             onSearchClick = { viewModel.startSearch(forceRefresh = false) }
           )
@@ -343,7 +348,12 @@ fun MainAppContent(
           ResultsScreen(
             outliers = outliers,
             nearMisses = nearMisses,
-            keyword = filters.keyword,
+            keyword = when (filters.mode) {
+              com.example.domain.DiscoveryMode.MULTI_KEYWORD -> filters.multiKeywords
+              com.example.domain.DiscoveryMode.CHANNEL_SCAN -> filters.channelInput
+              com.example.domain.DiscoveryMode.SIMILAR_TO_OUTLIER -> filters.similarSeedTitle
+              else -> filters.keyword
+            },
             debugStats = debugStats,
             isLoading = isSearching,
             progressMessage = progressMessage,
@@ -354,7 +364,10 @@ fun MainAppContent(
             onLoosenFilters = { viewModel.loosenFilters() },
             onApplyEmptyStageFix = { viewModel.applyEmptyStageFix(it) },
             onSaveToggle = { viewModel.toggleSave(it) },
-            onAiClick = { openAiSheetFor(it) }
+            onAiClick = { openAiSheetFor(it) },
+            mode = filters.mode,
+            similarSeedTitle = filters.similarSeedTitle,
+            onFindSimilar = { viewModel.findSimilar(it) }
           )
         }
         composable(ROUTE_SAVED) {

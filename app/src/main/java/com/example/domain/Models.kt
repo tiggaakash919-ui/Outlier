@@ -15,6 +15,20 @@ enum class SortOption(val label: String) {
   VIEWS_PER_SUB("Views per sub")
 }
 
+/**
+ * How the next search should discover Shorts.
+ *
+ * KEYWORD is the original single-query flow. The other modes reuse the same
+ * filtering/baseline pipeline, only the way video ids are collected changes.
+ */
+enum class DiscoveryMode(val label: String, val hint: String) {
+  KEYWORD("Keyword", "Ek keyword se search"),
+  MULTI_KEYWORD("Multi", "5 keywords tak, merge + dedupe"),
+  AUTO_EXPAND("Auto", "Gemini se 6 micro-niche keywords"),
+  CHANNEL_SCAN("Channel", "Channel ke saare Shorts scan"),
+  SIMILAR_TO_OUTLIER("Similar", "Is Short jaisa dhoondo")
+}
+
 data class OutlierVideo(
   val videoId: String,
   val title: String,
@@ -40,7 +54,12 @@ data class OutlierVideo(
   val shortStatus: ShortStatus = ShortStatus.UNVERIFIED,
   val isSaved: Boolean = false,
   val savedAt: Long = 0L,
-  val isOneHitWonder: Boolean = false
+  val isOneHitWonder: Boolean = false,
+  /** Which keyword (or generated niche) produced this row in merged searches. */
+  val matchedKeyword: String = "",
+  /** Same Short re-uploaded: this row lost to an earlier upload with >85% title similarity. */
+  val isPossibleReupload: Boolean = false,
+  val reuploadOfVideoId: String? = null
 )
 
 data class NearMissVideo(
@@ -107,9 +126,26 @@ data class FilterOptions(
   val regionCode: String = "IN", // IN, US, Any
   val language: String = "Any", // Hindi, English, Any
   val maxDurationSeconds: Long = 180L, // 60s, 180s
-  val pagesPerSearch: Int = 2 // 1, 2, 3
+  val pagesPerSearch: Int = 2, // 1, 2, 3
+  // --- discovery modes ---------------------------------------------------
+  val mode: DiscoveryMode = DiscoveryMode.KEYWORD,
+  val multiKeywords: String = "", // comma separated, up to 5
+  val channelInput: String = "", // channel URL, @handle or UC id
+  // --- extra quality filters --------------------------------------------
+  val excludeKeywords: String = "", // comma separated, matched against title + tags
+  val minLikesRatio: Double = 0.0, // 0 = off, else likes / views
+  val maxViralAgeDays: Int = 0, // 0 = off, else the viral Short must be this fresh
+  // --- SIMILAR_TO_OUTLIER seed ------------------------------------------
+  val similarSeedVideoId: String = "",
+  val similarSeedTitle: String = "",
+  val similarSeedTags: List<String> = emptyList()
 ) {
-  fun withTrimmedKeyword(): FilterOptions = copy(keyword = keyword.trim())
+  fun withTrimmedKeyword(): FilterOptions = copy(
+    keyword = keyword.trim(),
+    multiKeywords = multiKeywords.trim(),
+    channelInput = channelInput.trim(),
+    excludeKeywords = excludeKeywords.trim()
+  )
 }
 
 enum class PresetType {
@@ -119,9 +155,16 @@ enum class PresetType {
 }
 
 object Presets {
-  fun applyPreset(type: PresetType, currentKw: String): FilterOptions {
-    val trimmedKw = currentKw.trim()
-    return when (type) {
+  fun applyPreset(type: PresetType, currentKw: String): FilterOptions =
+    applyPreset(type, FilterOptions(keyword = currentKw.trim()))
+
+  /**
+   * Applies the numeric preset while keeping the user's discovery mode and the
+   * extra discovery filters (exclude keywords, likes ratio, viral age, seeds).
+   */
+  fun applyPreset(type: PresetType, current: FilterOptions): FilterOptions {
+    val trimmedKw = current.keyword.trim()
+    val base = when (type) {
       PresetType.TINY_GEMS -> FilterOptions(
         keyword = trimmedKw,
         minSubs = 0L,
@@ -165,6 +208,17 @@ object Presets {
         pagesPerSearch = 2
       )
     }
+    return base.copy(
+      mode = current.mode,
+      multiKeywords = current.multiKeywords,
+      channelInput = current.channelInput,
+      excludeKeywords = current.excludeKeywords,
+      minLikesRatio = current.minLikesRatio,
+      maxViralAgeDays = current.maxViralAgeDays,
+      similarSeedVideoId = current.similarSeedVideoId,
+      similarSeedTitle = current.similarSeedTitle,
+      similarSeedTags = current.similarSeedTags
+    )
   }
 }
 
@@ -190,7 +244,11 @@ data class DebugStats(
   val cacheHits: Int = 0,
   val negativeCacheHits: Int = 0,
   val videoStatsCacheHits: Int = 0,
-  val medianSkippedByCost: Int = 0
+  val medianSkippedByCost: Int = 0,
+  val afterExcludeFilter: Int = 0,
+  val afterLikesRatioFilter: Int = 0,
+  val afterViralAgeFilter: Int = 0,
+  val reuploadFlagged: Int = 0
 )
 
 /** Per-key quota usage, used by the key list in Settings. */

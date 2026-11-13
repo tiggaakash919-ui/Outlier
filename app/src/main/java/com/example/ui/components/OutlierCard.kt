@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
@@ -74,6 +75,7 @@ fun OutlierCard(
   onSaveToggle: (OutlierVideo) -> Unit,
   onCopyClick: (String, String) -> Unit, // type, content
   onAiClick: (OutlierVideo) -> Unit,
+  onFindSimilar: ((OutlierVideo) -> Unit)? = null,
   modifier: Modifier = Modifier
 ) {
   var showCopyMenu by remember { mutableStateOf(false) }
@@ -345,6 +347,39 @@ fun OutlierCard(
           )
         }
 
+        // Which merged keyword found this row
+        if (video.matchedKeyword.isNotBlank()) {
+          SuggestionChip(
+            onClick = {},
+            label = {
+              Text(
+                text = "🔑 ${video.matchedKeyword}",
+                fontSize = 11.sp,
+                color = SecondaryCyan,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+              )
+            },
+            colors = SuggestionChipDefaults.suggestionChipColors(
+              containerColor = SecondaryCyan.copy(alpha = 0.12f)
+            ),
+            border = null
+          )
+        }
+
+        // Re-upload dedupe flag: an earlier upload with >85% title similarity exists
+        if (video.isPossibleReupload) {
+          SuggestionChip(
+            onClick = {},
+            label = { Text("♻️ Possible re-upload", fontSize = 11.sp, color = BadgeYellow) },
+            colors = SuggestionChipDefaults.suggestionChipColors(
+              containerColor = BadgeYellow.copy(alpha = 0.14f)
+            ),
+            border = null,
+            modifier = Modifier.testTag("reupload_flag_${video.videoId}")
+          )
+        }
+
         // Likes & Engagement Rate
         if (video.likes > 0) {
           val engRate = OutlierCalculator.calculateEngagementRate(video.views, video.likes)
@@ -476,6 +511,25 @@ fun OutlierCard(
                   showCopyMenu = false
                   onCopyClick("Channel URL", "https://www.youtube.com/channel/${video.channelId}/shorts")
                 }
+              )
+            }
+          }
+
+          // 🔍 Find similar Shorts (needs a callback from Results)
+          if (onFindSimilar != null) {
+            FilledTonalIconButton(
+              onClick = { onFindSimilar?.invoke(video) },
+              shape = RoundedCornerShape(12.dp),
+              colors = IconButtonDefaults.filledTonalIconButtonColors(
+                containerColor = SecondaryCyan.copy(alpha = 0.16f)
+              ),
+              modifier = Modifier.testTag("find_similar_${video.videoId}")
+            ) {
+              Icon(
+                imageVector = Icons.Default.Search,
+                contentDescription = "Find similar Shorts",
+                tint = SecondaryCyan,
+                modifier = Modifier.size(18.dp)
               )
             }
           }

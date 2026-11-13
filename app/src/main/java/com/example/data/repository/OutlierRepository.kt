@@ -7,13 +7,19 @@ import com.example.data.local.SearchCacheEntity
 import com.example.data.local.SettingsStore
 import com.example.data.local.ShortVerificationCacheEntity
 import com.example.data.local.VideoStatsCacheEntity
+import com.example.data.remote.ChannelItem
+import com.example.data.remote.ChannelListResponse
 import com.example.data.remote.PlaylistItem
 import com.example.data.remote.ShortsVerifier
 import com.example.data.remote.YouTubeApi
 import com.example.domain.CacheTtl
+import com.example.domain.ChannelInputParser
 import com.example.domain.CostEstimate
 import com.example.domain.CostEstimator
 import com.example.domain.DebugStats
+import com.example.domain.DiscoveryCacheKey
+import com.example.domain.DiscoveryHelpers
+import com.example.domain.DiscoveryMode
 import com.example.domain.DurationParser
 import com.example.domain.FilterOptions
 import com.example.domain.MedianCalculator
@@ -72,7 +78,8 @@ class OutlierRepository(
   private val settingsStore: SettingsStore,
   private val quotaTracker: QuotaTracker,
   private val apiKeyManager: ApiKeyManager,
-  private val shortsVerifier: ShortsVerifier
+  private val shortsVerifier: ShortsVerifier,
+  private val aiRepository: AiRepository
 ) {
   private val searchCacheDao = database.searchCacheDao()
   private val channelCacheDao = database.channelCacheDao()
@@ -97,10 +104,8 @@ class OutlierRepository(
     private const val MAX_KEY_ATTEMPTS = SettingsStore.MAX_API_KEYS + 1
   }
 
-  fun createCacheKey(filters: FilterOptions, pageToken: String? = null): String {
-    val normKw = OutlierCalculator.trimKeyword(filters.keyword).lowercase(Locale.ROOT)
-    return "v=2|kw=$normKw|p=${filters.pagesPerSearch}|subs=${filters.minSubs}-${filters.maxSubs}|views=${filters.minViralViews}|med=${filters.maxMedianViews}|mul=${filters.minMultiplier}|rec=${filters.recency}|reg=${filters.regionCode}|lang=${filters.language}|dur=${filters.maxDurationSeconds}|age=${filters.minBaselineAgeHours}|token=${pageToken ?: ""}"
-  }
+  fun createCacheKey(filters: FilterOptions, pageToken: String? = null): String =
+    DiscoveryCacheKey.build(filters, pageToken)
 
   suspend fun searchOutliers(
     filters: FilterOptions,
@@ -110,7 +115,46 @@ class OutlierRepository(
     onConfirmCost: (suspend (CostEstimate) -> Boolean)? = null
   ): SearchResult = withContext(Dispatchers.IO) {
     try {
-      runSearch(filters, pageToken, forceRefresh, onConfirmCost)
+      val clean = filters.withTrimmedKeyword()
+      when (clean.mode) {
+        DiscoveryMode.KEYWORD -> {
+          runSearch(clean, pageToken, forceRefresh, onConfirmCost)
+        }
+        DiscoveryMode.MULTI_KEYWORD -> {
+          val keywords = DiscoveryHelpers.parseKeywordList(clean.multiKeywords)
+          if (keywords.isEmpty()) {
+            SearchResult.Error("Multi-keyword mode me kam se kam ek keyword daalo (comma se alag karein).")
+          } else {
+            runMerged(clean, keywords, forceRefresh, onConfirmCost)
+          }
+        }
+        DiscoveryMode.AUTO_EXPAND -> {
+          if (clean.keyword.isBlank()) {
+            SearchResult.Error("Auto-expand ke liye ek seed keyword daalo.")
+          } else {
+            _progressFlow.value = "Gemini se 6 micro-niche keywords ban rahe hain..."
+            val expansion = aiRepository.expandKeywords(clean.keyword, "Hinglish", forceRefresh)
+            if (!expansion.fromAi) {
+              _progressFlow.value = "Gemini available nahi hai, offline niche ideas use ho rahe hain..."
+            }
+            runMerged(clean, expansion.keywords, forceRefresh, onConfirmCost)
+          }
+        }
+        DiscoveryMode.CHANNEL_SCAN -> {
+          runChannelScan(clean, forceRefresh)
+        }
+        DiscoveryMode.SIMILAR_TO_OUTLIER -> {
+          val query = DiscoveryHelpers.buildSimilarQuery(
+            clean.similarSeedTags,
+            clean.similarSeedTitle.ifBlank { clean.keyword }
+          )
+          if (query.isBlank()) {
+            SearchResult.Error("Similar search ke liye pehle koi result card chuno.")
+          } else {
+            runSearch(clean.copy(keyword = query), pageToken, forceRefresh, onConfirmCost)
+          }
+        }
+      }
     } finally {
       _progressFlow.value = null
     }
@@ -255,6 +299,547 @@ class OutlierRepository(
     return lastError ?: SearchResult.Error("Search fail ho gayi")
   }
 
+  /**
+   * MULTI_KEYWORD / AUTO_EXPAND: runs the normal keyword pipeline once per
+   * keyword (so per-keyword result caching still works) and merges the unique
+   * videos. The first keyword wins for duplicates; later hits record their
+   * matched keyword.
+   */
+  private suspend fun runMerged(
+    filters: FilterOptions,
+    keywords: List<String>,
+    forceRefresh: Boolean,
+    onConfirmCost: (suspend (CostEstimate) -> Boolean)?
+  ): SearchResult {
+    val merged = LinkedHashMap<String, OutlierVideo>()
+    val mergedNearMisses = LinkedHashMap<String, NearMissVideo>()
+    var aggregated = DebugStats()
+    var successes = 0
+    var lastError: SearchResult.Error? = null
+
+    // Ask for cost confirmation at most once for the whole merged search.
+    var mergedCostDecision: Boolean? = null
+    val confirmCost: suspend (CostEstimate) -> Boolean = { estimate ->
+      val decided = mergedCostDecision
+      if (decided != null) {
+        decided
+      } else {
+        val result = onConfirmCost?.invoke(estimate) ?: true
+        mergedCostDecision = result
+        result
+      }
+    }
+
+    for ((index, kw) in keywords.withIndex()) {
+      _progressFlow.value = "Keyword ${index + 1}/${keywords.size}: $kw"
+      val subFilters = filters.copy(
+        mode = DiscoveryMode.KEYWORD,
+        keyword = kw,
+        multiKeywords = ""
+      )
+      when (val result = runSearch(subFilters, null, forceRefresh, confirmCost)) {
+        is SearchResult.Success -> {
+          successes++
+          result.outliers.forEach { video ->
+            if (!merged.containsKey(video.videoId)) {
+              merged[video.videoId] = video.copy(matchedKeyword = kw)
+            }
+          }
+          result.nearMisses.forEach { nearMiss ->
+            mergedNearMisses.putIfAbsent(nearMiss.videoId, nearMiss)
+          }
+          aggregated = sumStats(aggregated, result.debugStats)
+        }
+        is SearchResult.Error -> {
+          lastError = result
+          // Quota/key problems are global: keep whatever was already merged.
+          if (result.isQuotaExceeded || result.isKeyInvalid) break
+        }
+      }
+    }
+
+    if (successes == 0) {
+      return lastError ?: SearchResult.Error("Koi keyword results nahi de paya.")
+    }
+
+    val finalized = DiscoveryHelpers.flagReuploads(merged.values.toList())
+    val nearMisses = mergedNearMisses.values
+      .sortedWith(
+        compareByDescending<NearMissVideo> { it.stagePriority }
+          .thenByDescending { it.multiplier ?: 0.0 }
+          .thenByDescending { it.views }
+      )
+      .take(10)
+
+    val stats = aggregated.copy(
+      finalOutliers = finalized.size,
+      reuploadFlagged = finalized.count { it.isPossibleReupload },
+      // A merged search has no single cursor; "Load more" is keyword-mode only.
+      mainTotalCost = aggregated.mainTotalCost,
+      pages = aggregated.pages
+    )
+
+    return SearchResult.Success(
+      outliers = finalized,
+      nearMisses = nearMisses,
+      debugStats = stats,
+      nextPageToken = null,
+      isCacheHit = false
+    )
+  }
+
+  /**
+   * CHANNEL_SCAN: resolves one channel, reads its Shorts straight from the
+   * UUSH playlist and compares every Short against that channel's own median.
+   * Uses only the main unit bucket (no search.list calls).
+   */
+  private suspend fun runChannelScan(
+    filters: FilterOptions,
+    forceRefresh: Boolean
+  ): SearchResult {
+    val cacheKey = createCacheKey(filters)
+    if (!forceRefresh) {
+      readCachedResult(cacheKey)?.let { return it }
+    }
+
+    val target = ChannelInputParser.parse(filters.channelInput)
+      ?: return SearchResult.Error("Channel URL, @handle ya UC id daalo.")
+
+    apiKeyManager.ensureMigrated()
+    val startKey = apiKeyManager.acquireKey(QuotaBucket.MAIN)
+    if (startKey == null) {
+      val hasKeys = settingsStore.getApiKeys().isNotEmpty()
+      return SearchResult.Error(
+        message = if (hasKeys) {
+          "Saari API keys ka quota khatam ho gaya hai. Kal midnight Pacific par reset hoga."
+        } else {
+          "API key nahi mili. Kripya pehle apni key daalein."
+        },
+        isKeyInvalid = !hasKeys,
+        isQuotaExceeded = hasKeys,
+        failedBucket = QuotaBucket.MAIN
+      )
+    }
+    var key: ActiveKey = startKey
+    var lastError: SearchResult.Error? = null
+
+    for (attempt in 0 until MAX_KEY_ATTEMPTS) {
+      val quotaCheck = quotaTracker.canAffordSearch(
+        fingerprint = key.fingerprint,
+        pages = 0,
+        estimatedUnits = 8
+      )
+      if (quotaCheck is QuotaCheckResult.Blocked) {
+        lastError = SearchResult.Error(
+          quotaCheck.reason,
+          isQuotaExceeded = true,
+          failedBucket = quotaCheck.bucket
+        )
+        val next = apiKeyManager.rotateAway(key, quotaCheck.bucket)
+        if (next != null) {
+          key = next
+          continue
+        }
+        return lastError
+      }
+
+      val result = try {
+        scanChannelWithKey(filters, target, cacheKey, key)
+      } catch (e: AbortSearchException) {
+        e.error
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: IOException) {
+        return SearchResult.Error("Internet check karo")
+      } catch (e: Exception) {
+        return SearchResult.Error(
+          (e.message ?: "Channel scan me khamiyan aayi").replace(key.key, "[REDACTED]")
+        )
+      }
+
+      if (result is SearchResult.Success) return result
+      lastError = result as SearchResult.Error
+      when {
+        lastError.isQuotaExceeded -> {
+          val next = apiKeyManager.rotateAway(
+            key,
+            lastError.failedBucket ?: QuotaBucket.MAIN
+          )
+          if (next != null) {
+            key = next
+            continue
+          }
+          return lastError
+        }
+        lastError.isKeyInvalid -> {
+          apiKeyManager.discardKey(key.key)
+          val next = apiKeyManager.acquireKey(QuotaBucket.MAIN)
+          if (next != null) {
+            key = next
+            continue
+          }
+          return SearchResult.Error("Key kaam nahi kar rahi, nayi key daalo", isKeyInvalid = true)
+        }
+        else -> return lastError
+      }
+    }
+
+    return lastError ?: SearchResult.Error("Channel scan fail ho gaya")
+  }
+
+  private suspend fun scanChannelWithKey(
+    filters: FilterOptions,
+    target: ChannelInputParser.ChannelTarget,
+    cacheKey: String,
+    key: ActiveKey
+  ): SearchResult {
+    _progressFlow.value = "Channel resolve ho raha hai (${target.display})..."
+    val channelItem = resolveChannelItem(target, key)
+      ?: return SearchResult.Error("Channel nahi mila. URL ya @handle check karo.")
+
+    val channelId = channelItem.id
+    val subs = channelItem.statistics?.subscriberCount?.toLongOrNull() ?: 0L
+    val hiddenSubs = channelItem.statistics?.hiddenSubscriberCount ?: false
+    val channelTitle = channelItem.snippet?.title ?: target.display
+    val uploadsId = channelItem.contentDetails?.relatedPlaylists?.uploads
+    val nowMs = System.currentTimeMillis()
+
+    channelCacheDao.insertIfAbsent(channelId, subs, hiddenSubs, uploadsId, nowMs)
+    channelCacheDao.updateSubscriberInfo(channelId, subs, hiddenSubs, uploadsId, nowMs)
+
+    val sample = filters.samplePerChannel.coerceIn(5, 50)
+    _progressFlow.value = "Shorts playlist padhi ja rahi hai..."
+    var isUush = true
+    var playlistCost = 0
+    var items = fetchPlaylistItems(
+      playlistId = UushHelper.getShortsPlaylistId(channelId),
+      maxResults = sample,
+      key = key,
+      onUnitsUsed = { playlistCost += it }
+    )
+
+    if (items.isEmpty()) {
+      isUush = false
+      val fallbackId = uploadsId
+        ?: (if (channelId.startsWith("UC")) "UU" + channelId.drop(2) else null)
+        ?: return SearchResult.Error("Is channel ki Shorts/upload playlist nahi mili.")
+      items = fetchPlaylistItems(
+        playlistId = fallbackId,
+        maxResults = sample,
+        key = key,
+        onUnitsUsed = { playlistCost += it }
+      )
+    }
+
+    if (items.isEmpty()) {
+      return SearchResult.Error("Is channel par koi public Short nahi mila.")
+    }
+
+    val playlistVideoIds = items.mapNotNull { it.contentDetails?.videoId }
+      .distinct()
+      .take(sample)
+
+    if (playlistVideoIds.isEmpty()) {
+      return SearchResult.Error("Playlist me video ids nahi mile. Dobara try karo.")
+    }
+
+    _progressFlow.value = "Shorts ki details fetch ho rahi hain (${playlistVideoIds.size})..."
+    var videosCost = 0
+    val details = fetchVideoDetails(
+      videoIds = playlistVideoIds,
+      key = key,
+      onUnitsUsed = { videosCost += it },
+      onCacheHit = {}
+    )
+
+    val now = Instant.now()
+    val candidates = details.values.mapNotNull { v ->
+      if (v.videoId.isBlank()) return@mapNotNull null
+      RawVideoCandidate(
+        videoId = v.videoId,
+        title = v.title,
+        description = v.description,
+        tags = parseTags(v.tagsJson),
+        thumbnailUrl = v.thumbnailUrl,
+        channelId = v.channelId.ifBlank { channelId },
+        channelTitle = v.channelTitle.ifBlank { channelTitle },
+        views = v.views,
+        likes = v.likes,
+        comments = v.comments,
+        durationSeconds = v.durationSeconds,
+        publishedAt = v.publishedAt
+      )
+    }
+
+    val durationFiltered = candidates.filter { it.durationSeconds <= filters.maxDurationSeconds }
+    val excludes = DiscoveryHelpers.parseExcludeKeywords(filters.excludeKeywords)
+    val excludeFiltered = durationFiltered.filter {
+      !DiscoveryHelpers.matchesExcludeKeyword(it.title, it.tags, excludes)
+    }
+    val likesFiltered = excludeFiltered.filter {
+      DiscoveryHelpers.passesLikesRatio(it.likes, it.views, filters.minLikesRatio)
+    }
+    val ageFiltered = likesFiltered.filter {
+      DiscoveryHelpers.isWithinViralAge(it.publishedAt, filters.maxViralAgeDays, now)
+    }
+
+    val baselineViews = ageFiltered
+      .filter { MedianCalculator.isMatureEnough(it.publishedAt, filters.minBaselineAgeHours, now) }
+      .map { it.views }
+    val baseline = MedianCalculator.calculateBaseline(baselineViews)
+      ?: return SearchResult.Error(
+        "Channel me baseline ke liye kaafi mature Shorts nahi hain " +
+          "(${MedianCalculator.MIN_SAMPLES}+ chahiye)."
+      )
+
+    // The median already includes this channel's spikes, so a 10x cap on the
+    // configured multiplier keeps the mode useful with the default 50x preset.
+    val outlierThreshold = minOf(filters.minMultiplier.toDouble(), 10.0).coerceAtLeast(2.0)
+
+    val outliers = mutableListOf<OutlierVideo>()
+    val nearMisses = mutableListOf<NearMissVideo>()
+
+    for (v in ageFiltered) {
+      val multiplier = OutlierCalculator.calculateMultiplier(v.views, baseline.median)
+      val isOutlier = multiplier >= outlierThreshold
+      if (isOutlier) {
+        outliers.add(
+          OutlierVideo(
+            videoId = v.videoId,
+            title = v.title,
+            description = v.description,
+            tags = v.tags,
+            thumbnailUrl = v.thumbnailUrl,
+            channelId = channelId,
+            channelTitle = channelTitle,
+            subscriberCount = subs,
+            hiddenSubscriberCount = hiddenSubs,
+            views = v.views,
+            channelMedianViews = baseline.median,
+            channelTrimmedMeanViews = baseline.trimmedMean.roundToLong(),
+            channelP90Views = baseline.p90,
+            outlierMultiplier = multiplier,
+            viewsPerSub = OutlierCalculator.calculateViewsPerSub(v.views, subs),
+            likes = v.likes,
+            comments = v.comments,
+            durationSeconds = v.durationSeconds,
+            publishedAt = v.publishedAt,
+            othersAbove5xCount = MedianCalculator.countAboveMultiplier(
+              baselineViews, baseline.median, 5.0
+            ),
+            othersAbove10xCount = MedianCalculator.countAboveMultiplier(
+              baselineViews, baseline.median, 10.0
+            ),
+            shortStatus = if (isUush) ShortStatus.CONFIRMED_SHORT else ShortStatus.UNVERIFIED,
+            isSaved = savedDao.isSaved(v.videoId),
+            isOneHitWonder = OutlierCalculator.isOneHitWonder(
+              multiplier,
+              MedianCalculator.countAboveMultiplier(baselineViews, baseline.median, 5.0)
+            )
+          )
+        )
+      } else {
+        nearMisses.add(
+          NearMissVideo(
+            videoId = v.videoId,
+            title = v.title,
+            thumbnailUrl = v.thumbnailUrl,
+            channelId = channelId,
+            channelTitle = channelTitle,
+            views = v.views,
+            subscriberCount = subs,
+            hiddenSubscriberCount = hiddenSubs,
+            medianViews = baseline.median,
+            multiplier = multiplier,
+            reasonChip = "Multiplier ${OutlierCalculator.formatMultiplier(multiplier)}x < " +
+              "${OutlierCalculator.formatMultiplier(outlierThreshold)}x",
+            stagePriority = 4
+          )
+        )
+      }
+    }
+
+    val finalized = DiscoveryHelpers.flagReuploads(
+      outliers.sortedByDescending { it.outlierMultiplier }
+    )
+    val topNearMisses = nearMisses
+      .sortedWith(
+        compareByDescending<NearMissVideo> { it.multiplier ?: 0.0 }
+          .thenByDescending { it.views }
+      )
+      .take(10)
+
+    val stats = DebugStats(
+      searchReturned = playlistVideoIds.size,
+      pages = 0,
+      afterDurationFilter = durationFiltered.size,
+      afterMinViewsFilter = durationFiltered.size,
+      uniqueChannels = 1,
+      afterSubsFilter = 1,
+      channelsPassingMedian = 1,
+      uushCount = if (isUush) 1 else 0,
+      uploadsFallbackCount = if (isUush) 0 else 1,
+      finalOutliers = finalized.size,
+      verifiedShorts = if (isUush) finalized.size else 0,
+      searchCallsCost = 0,
+      videosListCost = videosCost,
+      channelsListCost = 1,
+      perChannelCost = playlistCost,
+      mainTotalCost = 1 + playlistCost + videosCost,
+      afterExcludeFilter = excludeFiltered.size,
+      afterLikesRatioFilter = likesFiltered.size,
+      afterViralAgeFilter = ageFiltered.size,
+      reuploadFlagged = finalized.count { it.isPossibleReupload }
+    )
+
+    writeCachedResult(cacheKey, finalized, topNearMisses, stats, null)
+
+    return SearchResult.Success(
+      outliers = finalized,
+      nearMisses = topNearMisses,
+      debugStats = stats,
+      nextPageToken = null,
+      isCacheHit = false
+    )
+  }
+
+  private suspend fun resolveChannelItem(
+    target: ChannelInputParser.ChannelTarget,
+    key: ActiveKey
+  ): ChannelItem? {
+    suspend fun request(kind: ChannelInputParser.Kind, value: String): Response<ChannelListResponse> {
+      return executeWithRetry {
+        when (kind) {
+          ChannelInputParser.Kind.ID -> youTubeApi.getChannels(ids = value, apiKey = key.key)
+          ChannelInputParser.Kind.HANDLE -> youTubeApi.getChannelByHandle(
+            handle = "@$value",
+            apiKey = key.key
+          )
+          ChannelInputParser.Kind.USERNAME -> youTubeApi.getChannelByUsername(
+            username = value,
+            apiKey = key.key
+          )
+        }
+      }
+    }
+
+    val response = request(target.kind, target.value)
+    val error = handleResponse(response, key, QuotaBucket.MAIN)
+    if (error != null && (error.isQuotaExceeded || error.isKeyInvalid)) {
+      throw AbortSearchException(error)
+    }
+    response.body()?.items?.firstOrNull()?.let { return it }
+
+    // Legacy /c/ or /user/ names may only resolve through forUsername.
+    if (target.kind == ChannelInputParser.Kind.HANDLE) {
+      val fallback = executeWithRetry {
+        youTubeApi.getChannelByUsername(username = target.value, apiKey = key.key)
+      }
+      val fallbackError = handleResponse(fallback, key, QuotaBucket.MAIN)
+      if (fallbackError != null && (fallbackError.isQuotaExceeded || fallbackError.isKeyInvalid)) {
+        throw AbortSearchException(fallbackError)
+      }
+      fallback.body()?.items?.firstOrNull()?.let { return it }
+    }
+    return null
+  }
+
+  private suspend fun fetchPlaylistItems(
+    playlistId: String,
+    maxResults: Int,
+    key: ActiveKey,
+    onUnitsUsed: (Int) -> Unit
+  ): List<PlaylistItem> {
+    val response = executeWithRetry {
+      youTubeApi.getPlaylistItems(
+        playlistId = playlistId,
+        maxResults = maxResults,
+        apiKey = key.key
+      )
+    }
+    val error = handleResponse(response, key, QuotaBucket.MAIN)
+    onUnitsUsed(1)
+    if (error != null && (error.isQuotaExceeded || error.isKeyInvalid)) {
+      throw AbortSearchException(error)
+    }
+    if (error != null) return emptyList()
+    return response.body()?.items ?: emptyList()
+  }
+
+  private suspend fun readCachedResult(cacheKey: String): SearchResult.Success? {
+    val cached = searchCacheDao.getCache(cacheKey) ?: return null
+    if (!CacheTtl.isFresh(System.currentTimeMillis(), cached.timestamp, CacheTtl.SEARCH_RESULTS_MS)) {
+      return null
+    }
+    return try {
+      val cachedResults = outlierListAdapter.fromJson(cached.resultsJson) ?: emptyList()
+      val cachedNearMisses =
+        runCatching { nearMissListAdapter.fromJson(cached.nearMissesJson) }.getOrNull()
+          ?: emptyList()
+      val cachedStats = debugStatsAdapter.fromJson(cached.debugStatsJson) ?: DebugStats()
+      SearchResult.Success(
+        outliers = cachedResults.map { it.copy(isSaved = savedDao.isSaved(it.videoId)) },
+        nearMisses = cachedNearMisses,
+        debugStats = cachedStats.copy(cacheHits = cachedStats.cacheHits + 1),
+        nextPageToken = cached.nextPageToken,
+        isCacheHit = true
+      )
+    } catch (_: Exception) {
+      null
+    }
+  }
+
+  private suspend fun writeCachedResult(
+    cacheKey: String,
+    outliers: List<OutlierVideo>,
+    nearMisses: List<NearMissVideo>,
+    stats: DebugStats,
+    nextPageToken: String?
+  ) {
+    try {
+      searchCacheDao.insertCache(
+        SearchCacheEntity(
+          cacheKey = cacheKey,
+          timestamp = System.currentTimeMillis(),
+          nextPageToken = nextPageToken,
+          resultsJson = outlierListAdapter.toJson(outliers),
+          debugStatsJson = debugStatsAdapter.toJson(stats),
+          nearMissesJson = nearMissListAdapter.toJson(nearMisses)
+        )
+      )
+    } catch (_: Exception) {
+    }
+  }
+
+  private fun sumStats(a: DebugStats, b: DebugStats): DebugStats = DebugStats(
+    searchReturned = a.searchReturned + b.searchReturned,
+    pages = a.pages + b.pages,
+    afterDurationFilter = a.afterDurationFilter + b.afterDurationFilter,
+    afterMinViewsFilter = a.afterMinViewsFilter + b.afterMinViewsFilter,
+    uniqueChannels = a.uniqueChannels + b.uniqueChannels,
+    afterSubsFilter = a.afterSubsFilter + b.afterSubsFilter,
+    channelsWithTooFewShorts = a.channelsWithTooFewShorts + b.channelsWithTooFewShorts,
+    channelsMedianTooHigh = a.channelsMedianTooHigh + b.channelsMedianTooHigh,
+    channelsPassingMedian = a.channelsPassingMedian + b.channelsPassingMedian,
+    uushCount = a.uushCount + b.uushCount,
+    uploadsFallbackCount = a.uploadsFallbackCount + b.uploadsFallbackCount,
+    finalOutliers = a.finalOutliers + b.finalOutliers,
+    verifiedShorts = a.verifiedShorts + b.verifiedShorts,
+    searchCallsCost = a.searchCallsCost + b.searchCallsCost,
+    videosListCost = a.videosListCost + b.videosListCost,
+    channelsListCost = a.channelsListCost + b.channelsListCost,
+    perChannelCost = a.perChannelCost + b.perChannelCost,
+    mainTotalCost = a.mainTotalCost + b.mainTotalCost,
+    cacheHits = a.cacheHits + b.cacheHits,
+    negativeCacheHits = a.negativeCacheHits + b.negativeCacheHits,
+    videoStatsCacheHits = a.videoStatsCacheHits + b.videoStatsCacheHits,
+    medianSkippedByCost = a.medianSkippedByCost + b.medianSkippedByCost,
+    afterExcludeFilter = a.afterExcludeFilter + b.afterExcludeFilter,
+    afterLikesRatioFilter = a.afterLikesRatioFilter + b.afterLikesRatioFilter,
+    afterViralAgeFilter = a.afterViralAgeFilter + b.afterViralAgeFilter,
+    reuploadFlagged = a.reuploadFlagged + b.reuploadFlagged
+  )
+
   private suspend fun searchWithKey(
     cleanFilters: FilterOptions,
     pageToken: String?,
@@ -274,7 +859,9 @@ class OutlierRepository(
     var curToken: String? = pageToken
     var finalNextPageToken: String? = null
 
-    val publishedAfter = computePublishedAfterRfc(cleanFilters.recency)
+    val publishedAfter = computePublishedAfterRfc(
+      DiscoveryHelpers.effectiveRecencyDays(cleanFilters.recency, cleanFilters.maxViralAgeDays)
+    )
     val region = if (cleanFilters.regionCode.equals("Any", ignoreCase = true)) null else cleanFilters.regionCode
     val relLang = when (cleanFilters.language.lowercase(Locale.ROOT)) {
       "hindi" -> "hi"
@@ -359,7 +946,27 @@ class OutlierRepository(
     // 2b: minViews check second
     val validCandidateVideos = durationFilteredVideos.filter { it.views >= cleanFilters.minViralViews }
     val afterMinViewsCount = validCandidateVideos.size
-    val uniqueChannels = validCandidateVideos.map { it.channelId }.distinct()
+
+    // 2c: exclude keywords (before any channel units are spent)
+    val excludes = DiscoveryHelpers.parseExcludeKeywords(cleanFilters.excludeKeywords)
+    val excludeFilteredVideos = validCandidateVideos.filter {
+      !DiscoveryHelpers.matchesExcludeKeyword(it.title, it.tags, excludes)
+    }
+    val afterExcludeCount = excludeFilteredVideos.size
+
+    // 2d: minimum likes/views ratio. Hidden like counts are rejected when requested.
+    val likesFilteredVideos = excludeFilteredVideos.filter {
+      DiscoveryHelpers.passesLikesRatio(it.likes, it.views, cleanFilters.minLikesRatio)
+    }
+    val afterLikesCount = likesFilteredVideos.size
+
+    // 2e: the viral Short itself must be fresh (e.g. viral in the last 7/30 days)
+    val ageFilteredVideos = likesFilteredVideos.filter {
+      DiscoveryHelpers.isWithinViralAge(it.publishedAt, cleanFilters.maxViralAgeDays)
+    }
+    val afterAgeCount = ageFilteredVideos.size
+
+    val uniqueChannels = ageFilteredVideos.map { it.channelId }.distinct()
 
     // Step 3: channels.list (subscriber data cached for 24h, negative results included)
     _progressFlow.value = "Channels ka subscriber check ho raha hai (${uniqueChannels.size} channels)..."
@@ -538,7 +1145,7 @@ class OutlierRepository(
           channelSemaphore.withPermit {
             if (abortRef.get() != null) return@withPermit
 
-            val viralVideoIdsFromThisChannel = validCandidateVideos
+            val viralVideoIdsFromThisChannel = ageFilteredVideos
               .filter { it.channelId == chId }
               .map { it.videoId }
               .toSet()
@@ -635,7 +1242,7 @@ class OutlierRepository(
     val finalCandidates = mutableListOf<OutlierVideo>()
     val rejectedCandidates = mutableListOf<NearMissVideo>()
 
-    for (v in validCandidateVideos) {
+    for (v in ageFilteredVideos) {
       val chInfo = channelDataMap[v.channelId]
       val subs = chInfo?.subscriberCount ?: 0L
       val hiddenSubs = chInfo?.hasHiddenSubscribers ?: false
@@ -785,6 +1392,10 @@ class OutlierRepository(
       verifiedOutliers.addAll(finalCandidates.drop(30))
     }
 
+    // Re-upload dedupe: later copies of the same Short keep a flag and point at the original.
+    val finalizedOutliers = DiscoveryHelpers.flagReuploads(verifiedOutliers)
+    val reuploadCount = finalizedOutliers.count { it.isPossibleReupload }
+
     val mainTotalCost = videosListCost + channelsListCost + perChannelCost
 
     val debugStats = DebugStats(
@@ -799,7 +1410,7 @@ class OutlierRepository(
       channelsPassingMedian = channelsPassingMedianCount,
       uushCount = uushCount,
       uploadsFallbackCount = uploadsFallbackCount,
-      finalOutliers = verifiedOutliers.size,
+      finalOutliers = finalizedOutliers.size,
       verifiedShorts = verifiedShortsCount,
       searchCallsCost = currentSearchCalls,
       videosListCost = videosListCost,
@@ -809,7 +1420,11 @@ class OutlierRepository(
       cacheHits = channelCacheHits,
       negativeCacheHits = negativeCacheHits,
       videoStatsCacheHits = videoStatsCacheHits,
-      medianSkippedByCost = skippedByCostIds.size
+      medianSkippedByCost = skippedByCostIds.size,
+      afterExcludeFilter = afterExcludeCount,
+      afterLikesRatioFilter = afterLikesCount,
+      afterViralAgeFilter = afterAgeCount,
+      reuploadFlagged = reuploadCount
     )
 
     // Step 7: save to Room search cache (including near misses)
@@ -819,7 +1434,7 @@ class OutlierRepository(
           cacheKey = cacheKey,
           timestamp = System.currentTimeMillis(),
           nextPageToken = finalNextPageToken,
-          resultsJson = outlierListAdapter.toJson(verifiedOutliers),
+          resultsJson = outlierListAdapter.toJson(finalizedOutliers),
           debugStatsJson = debugStatsAdapter.toJson(debugStats),
           nearMissesJson = nearMissListAdapter.toJson(topNearMisses)
         )
@@ -828,7 +1443,7 @@ class OutlierRepository(
     }
 
     return SearchResult.Success(
-      outliers = verifiedOutliers,
+      outliers = finalizedOutliers,
       nearMisses = topNearMisses,
       debugStats = debugStats,
       nextPageToken = finalNextPageToken,
@@ -1037,8 +1652,15 @@ class OutlierRepository(
     errorBody: String?,
     bucket: QuotaBucket
   ): SearchResult.Error {
-    if (statusCode == 400 || errorBody?.contains("keyInvalid", ignoreCase = true) == true) {
+    val looksLikeBadKey = errorBody?.contains("keyInvalid", ignoreCase = true) == true ||
+      errorBody?.contains("API key not valid", ignoreCase = true) == true ||
+      errorBody?.contains("invalid API key", ignoreCase = true) == true
+    if (looksLikeBadKey || (statusCode == 400 && errorBody.isNullOrBlank())) {
       return SearchResult.Error("Key kaam nahi kar rahi, nayi key daalo", isKeyInvalid = true)
+    }
+    if (statusCode == 400) {
+      // e.g. an unknown @handle reaches the API as a bad request; do not discard the key.
+      return SearchResult.Error("YouTube request valid nahi thi (HTTP 400). Input check karo.")
     }
     return when (statusCode) {
       403 -> {
@@ -1093,17 +1715,9 @@ class OutlierRepository(
     }.take(take)
   }
 
-  private fun computePublishedAfterRfc(recency: String): String? {
-    if (recency.equals("any", ignoreCase = true)) return null
-    val now = Instant.now()
-    val targetInstant = when (recency.lowercase(Locale.ROOT)) {
-      "7d" -> now.minus(7, ChronoUnit.DAYS)
-      "30d" -> now.minus(30, ChronoUnit.DAYS)
-      "90d" -> now.minus(90, ChronoUnit.DAYS)
-      "6mo" -> now.minus(180, ChronoUnit.DAYS)
-      "1y" -> now.minus(365, ChronoUnit.DAYS)
-      else -> now.minus(90, ChronoUnit.DAYS)
-    }
+  private fun computePublishedAfterRfc(days: Int?): String? {
+    if (days == null || days <= 0) return null
+    val targetInstant = Instant.now().minus(days.toLong(), ChronoUnit.DAYS)
     return DateTimeFormatter.ISO_INSTANT.format(targetInstant)
   }
 

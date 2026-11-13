@@ -125,3 +125,13 @@ data class AiCacheEntity(
   val responseJson: String,
   val timestamp: Long
 )
+
+/** Gemini-generated micro-niche keywords, cached for faster AUTO_EXPAND runs. */
+@Entity(tableName = "niche_cache")
+data class NicheCacheEntity(
+  @PrimaryKey val cacheKey: String, // "{normalizedKeyword}_{language}"
+  val keyword: String,
+  val language: String,
+  val keywordsJson: String,
+  val timestamp: Long
+)

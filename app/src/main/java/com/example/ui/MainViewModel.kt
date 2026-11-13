@@ -15,8 +15,11 @@ import com.example.data.repository.SavedRepository
 import com.example.data.repository.SearchResult
 import com.example.domain.AiUiState
 import com.example.domain.ApiKeyUi
+import com.example.domain.ChannelInputParser
 import com.example.domain.CostEstimate
 import com.example.domain.DebugStats
+import com.example.domain.DiscoveryHelpers
+import com.example.domain.DiscoveryMode
 import com.example.domain.EmptyStageReason
 import com.example.domain.FilterOptions
 import com.example.domain.NearMissVideo
@@ -122,6 +125,13 @@ class MainViewModel(
   )
   val recentSearches: StateFlow<List<String>> = _recentSearches.asStateFlow()
 
+  /** AUTO_EXPAND chips generated on Home (Gemini or offline fallback). */
+  private val _expandedKeywords = MutableStateFlow<List<String>>(emptyList())
+  val expandedKeywords: StateFlow<List<String>> = _expandedKeywords.asStateFlow()
+
+  private val _isExpandingKeywords = MutableStateFlow(false)
+  val isExpandingKeywords: StateFlow<Boolean> = _isExpandingKeywords.asStateFlow()
+
   private val _aiUiState = MutableStateFlow<AiUiState>(AiUiState.Idle)
   val aiUiState: StateFlow<AiUiState> = _aiUiState.asStateFlow()
 
@@ -181,12 +191,21 @@ class MainViewModel(
     if (_isSearching.value) return
     val trimmedFilters = _filters.value.withTrimmedKeyword()
     _filters.value = trimmedFilters
-    val kw = trimmedFilters.keyword
-    if (kw.isBlank()) return
 
-    // Add to recent searches
-    if (!_recentSearches.value.contains(kw)) {
-      _recentSearches.value = listOf(kw) + _recentSearches.value.take(5)
+    val inputError = validationError(trimmedFilters)
+    if (inputError != null) {
+      viewModelScope.launch { _userMessages.emit(inputError) }
+      return
+    }
+
+    val recentLabel = when (trimmedFilters.mode) {
+      DiscoveryMode.MULTI_KEYWORD ->
+        DiscoveryHelpers.parseKeywordList(trimmedFilters.multiKeywords).firstOrNull()
+      DiscoveryMode.CHANNEL_SCAN, DiscoveryMode.SIMILAR_TO_OUTLIER -> null
+      else -> trimmedFilters.keyword.ifBlank { null }
+    }
+    if (recentLabel != null && !_recentSearches.value.contains(recentLabel)) {
+      _recentSearches.value = listOf(recentLabel) + _recentSearches.value.take(5)
     }
 
     _isSearching.value = true
@@ -219,8 +238,71 @@ class MainViewModel(
     }
   }
 
+  /** Returns a user-facing message when the current mode input is incomplete. */
+  private fun validationError(filters: FilterOptions): String? = when (filters.mode) {
+    DiscoveryMode.KEYWORD ->
+      if (filters.keyword.isBlank()) "Pehle keyword daalo." else null
+    DiscoveryMode.MULTI_KEYWORD ->
+      if (DiscoveryHelpers.parseKeywordList(filters.multiKeywords).isEmpty()) {
+        "Multi-keyword mode me comma se alag karke 1-5 keywords daalo."
+      } else null
+    DiscoveryMode.AUTO_EXPAND ->
+      if (filters.keyword.isBlank()) "Auto-expand ke liye seed keyword daalo." else null
+    DiscoveryMode.CHANNEL_SCAN ->
+      if (ChannelInputParser.parse(filters.channelInput) == null) {
+        "Channel URL, @handle ya UC id daalo."
+      } else null
+    DiscoveryMode.SIMILAR_TO_OUTLIER ->
+      if (filters.similarSeedVideoId.isBlank() && filters.similarSeedTitle.isBlank()) {
+        "Similar search ke liye kisi result card par 🔍 dabao."
+      } else null
+  }
+
+  fun findSimilar(video: OutlierVideo) {
+    if (_isSearching.value) return
+    _filters.value = _filters.value.copy(
+      mode = DiscoveryMode.SIMILAR_TO_OUTLIER,
+      keyword = "",
+      multiKeywords = "",
+      channelInput = "",
+      similarSeedVideoId = video.videoId,
+      similarSeedTitle = video.title,
+      similarSeedTags = video.tags
+    )
+    startSearch()
+  }
+
+  fun exitSimilarMode() {
+    _filters.value = _filters.value.copy(
+      mode = DiscoveryMode.KEYWORD,
+      similarSeedVideoId = "",
+      similarSeedTitle = "",
+      similarSeedTags = emptyList()
+    )
+  }
+
+  fun expandKeywordsNow() {
+    val seed = _filters.value.keyword.trim()
+    if (seed.isBlank() || _isExpandingKeywords.value) return
+    _isExpandingKeywords.value = true
+    viewModelScope.launch {
+      val expansion = aiRepository.expandKeywords(seed, aiLanguage.value)
+      _expandedKeywords.value = expansion.keywords
+      _isExpandingKeywords.value = false
+      if (!expansion.fromAi) {
+        _userMessages.emit("Gemini se keywords nahi bane, offline niche ideas use ho rahe hain.")
+      }
+    }
+  }
+
+  fun clearExpandedKeywords() {
+    _expandedKeywords.value = emptyList()
+  }
+
   fun loadMore() {
     if (_isSearching.value) return
+    // Merged modes and channel scan do not expose a single page cursor.
+    if (_filters.value.mode != DiscoveryMode.KEYWORD) return
     val token = _nextPageToken.value ?: return
     val trimmedFilters = _filters.value.withTrimmedKeyword()
     _filters.value = trimmedFilters
@@ -262,7 +344,14 @@ class MainViewModel(
     val updatedFilters = if (isSlice) {
       _filters.value.copy(recency = variantOrSlice).withTrimmedKeyword()
     } else {
-      _filters.value.copy(keyword = variantOrSlice.trim())
+      _filters.value.copy(
+        mode = DiscoveryMode.KEYWORD,
+        keyword = variantOrSlice.trim(),
+        multiKeywords = "",
+        similarSeedVideoId = "",
+        similarSeedTitle = "",
+        similarSeedTags = emptyList()
+      )
     }
     _filters.value = updatedFilters
 
@@ -297,7 +386,7 @@ class MainViewModel(
 
   fun loosenFilters() {
     val cur = _filters.value
-    val loose = Presets.applyPreset(PresetType.LOOSE, cur.keyword)
+    val loose = Presets.applyPreset(PresetType.LOOSE, cur)
     val isAlreadyLoose = cur.maxSubs >= loose.maxSubs &&
       cur.maxMedianViews >= loose.maxMedianViews &&
       cur.minViralViews <= loose.minViralViews &&
@@ -409,6 +498,7 @@ class MainViewModel(
     database.videoStatsDao().clearVideoStats()
     database.shortVerificationDao().clearShortVerificationCache()
     database.aiCacheDao().clearAiCache()
+    database.nicheCacheDao().clearNicheCache()
   }
 
   fun clearAllData() {

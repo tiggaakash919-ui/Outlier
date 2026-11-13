@@ -95,7 +95,8 @@ class AppContainer(private val context: Context) {
       settingsStore = settingsStore,
       quotaTracker = quotaTracker,
       apiKeyManager = apiKeyManager,
-      shortsVerifier = shortsVerifier
+      shortsVerifier = shortsVerifier,
+      aiRepository = aiRepository
     )
   }
 

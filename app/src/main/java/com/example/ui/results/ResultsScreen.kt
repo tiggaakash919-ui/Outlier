@@ -86,6 +86,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BookmarkBorder
 import com.example.domain.DebugStats
+import com.example.domain.DiscoveryMode
 import com.example.domain.EmptyStageReason
 import com.example.domain.NearMissVideo
 import com.example.domain.OutlierCalculator
@@ -120,6 +121,9 @@ fun ResultsScreen(
   onApplyEmptyStageFix: (EmptyStageReason) -> Unit = {},
   onSaveToggle: (OutlierVideo) -> Unit,
   onAiClick: (OutlierVideo) -> Unit,
+  mode: DiscoveryMode = DiscoveryMode.KEYWORD,
+  similarSeedTitle: String = "",
+  onFindSimilar: ((OutlierVideo) -> Unit)? = null,
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
@@ -190,6 +194,33 @@ fun ResultsScreen(
           color = MaterialTheme.colorScheme.onBackground,
           modifier = Modifier.testTag("results_header_title")
         )
+
+        if (mode != DiscoveryMode.KEYWORD) {
+          Spacer(modifier = Modifier.height(6.dp))
+          Card(
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = PrimaryViolet.copy(alpha = 0.12f)),
+            modifier = Modifier
+              .fillMaxWidth()
+              .testTag("results_mode_banner")
+          ) {
+            val bannerText = when (mode) {
+              DiscoveryMode.MULTI_KEYWORD -> "🔀 Multi-keyword merge — duplicate videos hata diye gaye hain."
+              DiscoveryMode.AUTO_EXPAND -> "✨ Gemini micro-niches se merged search."
+              DiscoveryMode.CHANNEL_SCAN ->
+                "📺 Channel scan — har Short us channel ke median se compare hua hai."
+              DiscoveryMode.SIMILAR_TO_OUTLIER ->
+                "🔍 Similar to: ${similarSeedTitle.ifBlank { "chuna gaya Short" }}"
+              DiscoveryMode.KEYWORD -> ""
+            }
+            Text(
+              text = bannerText,
+              fontSize = 11.sp,
+              color = MaterialTheme.colorScheme.onSurface,
+              modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+            )
+          }
+        }
 
         // Only show Sort Selector & Disclaimer when there are results to sort
         if (displayList.isNotEmpty() || outliers.isNotEmpty()) {
@@ -386,29 +417,31 @@ fun ResultsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
               ) {
-                // Targeted one-tap fix button
-                Button(
-                  onClick = { onApplyEmptyStageFix(detectedStage) },
-                  shape = RoundedCornerShape(14.dp),
-                  colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
-                  modifier = Modifier
-                    .weight(1f)
-                    .testTag("empty_stage_fix_button")
-                ) {
-                  Icon(
-                    imageVector = Icons.Default.AutoFixHigh,
-                    contentDescription = null,
-                    modifier = Modifier.size(15.dp),
-                    tint = Color.White
-                  )
-                  Spacer(modifier = Modifier.width(6.dp))
-                  Text(
-                    text = detectedStage.fixButtonLabel,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White,
-                    maxLines = 1
-                  )
+                // Targeted one-tap fix button (keyword-ish modes only)
+                if (mode != DiscoveryMode.CHANNEL_SCAN) {
+                  Button(
+                    onClick = { onApplyEmptyStageFix(detectedStage) },
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
+                    modifier = Modifier
+                      .weight(1f)
+                      .testTag("empty_stage_fix_button")
+                  ) {
+                    Icon(
+                      imageVector = Icons.Default.AutoFixHigh,
+                      contentDescription = null,
+                      modifier = Modifier.size(15.dp),
+                      tint = Color.White
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                      text = detectedStage.fixButtonLabel,
+                      fontSize = 12.sp,
+                      fontWeight = FontWeight.SemiBold,
+                      color = Color.White,
+                      maxLines = 1
+                    )
+                  }
                 }
 
                 // Existing "Loosen filters" button
@@ -443,6 +476,7 @@ fun ResultsScreen(
           onSaveToggle = onSaveToggle,
           onCopyClick = { label, content -> copyToClipboard(label, content) },
           onAiClick = onAiClick,
+          onFindSimilar = onFindSimilar,
           modifier = Modifier.animateItem()
         )
       }

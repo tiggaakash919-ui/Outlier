@@ -23,6 +23,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -63,6 +64,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.domain.DiscoveryHelpers
+import com.example.domain.DiscoveryMode
 import com.example.domain.FilterOptions
 import com.example.domain.OutlierCalculator
 import com.example.domain.PresetType
@@ -82,6 +85,9 @@ fun HomeScreen(
   isSearching: Boolean,
   progressMessage: String?,
   recentSearches: List<String>,
+  expandedKeywords: List<String> = emptyList(),
+  isExpandingKeywords: Boolean = false,
+  onExpandKeywords: () -> Unit = {},
   onFiltersChange: (FilterOptions) -> Unit,
   onSearchClick: () -> Unit,
   modifier: Modifier = Modifier
@@ -89,16 +95,31 @@ fun HomeScreen(
   val appStrings = LocalAppStrings.current
   var showAdvancedFilters by remember { mutableStateOf(false) }
   var searchInput by remember { mutableStateOf(filters.keyword) }
+  var multiInput by remember { mutableStateOf(filters.multiKeywords) }
+  var channelInput by remember { mutableStateOf(filters.channelInput) }
 
   LaunchedEffect(filters.keyword) {
     if (searchInput.trim() != filters.keyword) {
       searchInput = filters.keyword
     }
   }
+  LaunchedEffect(filters.multiKeywords) {
+    if (multiInput != filters.multiKeywords) multiInput = filters.multiKeywords
+  }
+  LaunchedEffect(filters.channelInput) {
+    if (channelInput != filters.channelInput) channelInput = filters.channelInput
+  }
 
   val nicheSuggestions = listOf("Tech", "Finance", "Motivation", "Facts", "Comedy", "Gaming", "Cooking")
   // Rotation handles a single exhausted key; block only when every key is spent.
   val isQuotaBlocked = !quotaStatus.hasUsableKey
+  val multiKeywordCount = DiscoveryHelpers.parseKeywordList(filters.multiKeywords).size
+  val canSearch = when (filters.mode) {
+    DiscoveryMode.KEYWORD, DiscoveryMode.AUTO_EXPAND -> filters.keyword.isNotBlank()
+    DiscoveryMode.MULTI_KEYWORD -> multiKeywordCount > 0
+    DiscoveryMode.CHANNEL_SCAN -> filters.channelInput.isNotBlank()
+    DiscoveryMode.SIMILAR_TO_OUTLIER -> filters.similarSeedTitle.isNotBlank()
+  }
 
   Column(
     modifier = modifier
@@ -163,87 +184,291 @@ fun HomeScreen(
 
     Spacer(modifier = Modifier.height(18.dp))
 
-    // Search Input Field
-    OutlinedTextField(
-      value = searchInput,
-      onValueChange = {
-        searchInput = it
-        onFiltersChange(filters.copy(keyword = it))
-      },
-      label = { Text(appStrings.searchFieldLabel) },
-      placeholder = { Text("Keywords...") },
-      singleLine = true,
-      leadingIcon = {
-        Icon(
-          imageVector = Icons.Default.Search,
-          contentDescription = null,
-          tint = PrimaryViolet
-        )
-      },
-      trailingIcon = {
-        if (searchInput.isNotEmpty()) {
-          IconButton(onClick = {
-            searchInput = ""
-            onFiltersChange(filters.copy(keyword = ""))
-          }) {
-            Icon(imageVector = Icons.Default.Clear, contentDescription = "Clear")
-          }
-        }
-      },
-      keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-      keyboardActions = KeyboardActions(
-        onSearch = {
-          if (filters.keyword.isNotBlank() && !isSearching && !isQuotaBlocked) {
-            onSearchClick()
-          }
-        }
-      ),
-      shape = RoundedCornerShape(16.dp),
-      colors = OutlinedTextFieldDefaults.colors(
-        focusedContainerColor = MaterialTheme.colorScheme.surface,
-        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-        focusedBorderColor = PrimaryViolet,
-        unfocusedBorderColor = MaterialTheme.colorScheme.outline
-      ),
-      modifier = Modifier
-        .fillMaxWidth()
-        .testTag("home_search_input")
+    // Discovery mode selector
+    Text(
+      text = "Discovery Mode",
+      fontSize = 13.sp,
+      fontWeight = FontWeight.SemiBold,
+      color = MaterialTheme.colorScheme.onSurfaceVariant
     )
-
-    Spacer(modifier = Modifier.height(10.dp))
-
-    // Niche Filter Chips
+    Spacer(modifier = Modifier.height(6.dp))
     Row(
       modifier = Modifier
         .fillMaxWidth()
         .horizontalScroll(rememberScrollState()),
       horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-      nicheSuggestions.forEach { niche ->
+      DiscoveryMode.entries.forEach { mode ->
         FilterChip(
-          selected = filters.keyword.equals(niche, ignoreCase = true),
+          selected = filters.mode == mode,
           onClick = {
-            searchInput = niche
-            onFiltersChange(filters.copy(keyword = niche))
+            onFiltersChange(
+              filters.copy(
+                mode = mode,
+                similarSeedVideoId = if (mode == DiscoveryMode.SIMILAR_TO_OUTLIER) {
+                  filters.similarSeedVideoId
+                } else "",
+                similarSeedTitle = if (mode == DiscoveryMode.SIMILAR_TO_OUTLIER) {
+                  filters.similarSeedTitle
+                } else "",
+                similarSeedTags = if (mode == DiscoveryMode.SIMILAR_TO_OUTLIER) {
+                  filters.similarSeedTags
+                } else emptyList()
+              )
+            )
           },
-          label = { Text(niche, fontSize = 12.sp) },
+          label = { Text(mode.label, fontSize = 12.sp) },
           colors = FilterChipDefaults.filterChipColors(
             selectedContainerColor = PrimaryViolet.copy(alpha = 0.25f),
             selectedLabelColor = MaterialTheme.colorScheme.onSurface
           ),
-          modifier = Modifier.testTag("chip_niche_$niche")
+          modifier = Modifier.testTag("chip_mode_${mode.name}")
         )
+      }
+    }
+    Text(filters.mode.hint, fontSize = 11.sp, color = SecondaryCyan)
+
+    Spacer(modifier = Modifier.height(10.dp))
+
+    when (filters.mode) {
+      DiscoveryMode.KEYWORD, DiscoveryMode.AUTO_EXPAND -> {
+        OutlinedTextField(
+          value = searchInput,
+          onValueChange = {
+            searchInput = it
+            onFiltersChange(filters.copy(keyword = it))
+          },
+          label = {
+            Text(
+              if (filters.mode == DiscoveryMode.AUTO_EXPAND) {
+                "Seed keyword (Gemini isse 6 niche banayega)"
+              } else {
+                appStrings.searchFieldLabel
+              }
+            )
+          },
+          placeholder = { Text("Keywords...") },
+          singleLine = true,
+          leadingIcon = {
+            Icon(
+              imageVector = Icons.Default.Search,
+              contentDescription = null,
+              tint = PrimaryViolet
+            )
+          },
+          trailingIcon = {
+            if (searchInput.isNotEmpty()) {
+              IconButton(onClick = {
+                searchInput = ""
+                onFiltersChange(filters.copy(keyword = ""))
+              }) {
+                Icon(imageVector = Icons.Default.Clear, contentDescription = "Clear")
+              }
+            }
+          },
+          keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+          keyboardActions = KeyboardActions(
+            onSearch = {
+              if (canSearch && !isSearching && !isQuotaBlocked) {
+                onSearchClick()
+              }
+            }
+          ),
+          shape = RoundedCornerShape(16.dp),
+          colors = OutlinedTextFieldDefaults.colors(
+            focusedContainerColor = MaterialTheme.colorScheme.surface,
+            unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+            focusedBorderColor = PrimaryViolet,
+            unfocusedBorderColor = MaterialTheme.colorScheme.outline
+          ),
+          modifier = Modifier
+            .fillMaxWidth()
+            .testTag("home_search_input")
+        )
+
+        if (filters.mode == DiscoveryMode.AUTO_EXPAND) {
+          Spacer(modifier = Modifier.height(8.dp))
+          Button(
+            onClick = onExpandKeywords,
+            enabled = filters.keyword.isNotBlank() && !isExpandingKeywords,
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = PrimaryViolet),
+            modifier = Modifier
+              .fillMaxWidth()
+              .testTag("auto_expand_button")
+          ) {
+            if (isExpandingKeywords) {
+              CircularProgressIndicator(
+                color = Color.White,
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 2.dp
+              )
+            } else {
+              Icon(
+                imageVector = Icons.Default.AutoAwesome,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = Color.White
+              )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+              text = if (isExpandingKeywords) "Niche keywords ban rahe hain..." else "✨ Gemini se 6 niche keywords banao",
+              fontSize = 13.sp,
+              color = Color.White
+            )
+          }
+        }
+      }
+
+      DiscoveryMode.MULTI_KEYWORD -> {
+        OutlinedTextField(
+          value = multiInput,
+          onValueChange = {
+            multiInput = it
+            onFiltersChange(filters.copy(multiKeywords = it))
+          },
+          label = { Text("Keywords (comma se alag, max 5)") },
+          placeholder = { Text("minecraft, cooking, facts") },
+          supportingText = { Text("$multiKeywordCount/5 keywords") },
+          singleLine = true,
+          leadingIcon = {
+            Icon(
+              imageVector = Icons.Default.Search,
+              contentDescription = null,
+              tint = PrimaryViolet
+            )
+          },
+          keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+          keyboardActions = KeyboardActions(
+            onSearch = {
+              if (canSearch && !isSearching && !isQuotaBlocked) onSearchClick()
+            }
+          ),
+          shape = RoundedCornerShape(16.dp),
+          colors = OutlinedTextFieldDefaults.colors(
+            focusedContainerColor = MaterialTheme.colorScheme.surface,
+            unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+            focusedBorderColor = PrimaryViolet,
+            unfocusedBorderColor = MaterialTheme.colorScheme.outline
+          ),
+          modifier = Modifier
+            .fillMaxWidth()
+            .testTag("home_multi_keyword_input")
+        )
+      }
+
+      DiscoveryMode.CHANNEL_SCAN -> {
+        OutlinedTextField(
+          value = channelInput,
+          onValueChange = {
+            channelInput = it
+            onFiltersChange(filters.copy(channelInput = it))
+          },
+          label = { Text("Channel URL / @handle / UC id") },
+          placeholder = { Text("https://youtube.com/@MrBeast") },
+          supportingText = { Text("Shorts UUSH playlist se aate hain, search quota use nahi hota.") },
+          singleLine = true,
+          leadingIcon = {
+            Icon(
+              imageVector = Icons.Default.Search,
+              contentDescription = null,
+              tint = PrimaryViolet
+            )
+          },
+          keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+          keyboardActions = KeyboardActions(
+            onSearch = {
+              if (canSearch && !isSearching && !isQuotaBlocked) onSearchClick()
+            }
+          ),
+          shape = RoundedCornerShape(16.dp),
+          colors = OutlinedTextFieldDefaults.colors(
+            focusedContainerColor = MaterialTheme.colorScheme.surface,
+            unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+            focusedBorderColor = PrimaryViolet,
+            unfocusedBorderColor = MaterialTheme.colorScheme.outline
+          ),
+          modifier = Modifier
+            .fillMaxWidth()
+            .testTag("home_channel_input")
+        )
+      }
+
+      DiscoveryMode.SIMILAR_TO_OUTLIER -> {
+        Card(
+          shape = RoundedCornerShape(16.dp),
+          colors = CardDefaults.cardColors(containerColor = PrimaryViolet.copy(alpha = 0.12f)),
+          modifier = Modifier
+            .fillMaxWidth()
+            .testTag("similar_mode_banner")
+        ) {
+          Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+              text = "🔍 Similar to: " +
+                filters.similarSeedTitle.ifBlank { "koi result card chuno" },
+              fontSize = 13.sp,
+              fontWeight = FontWeight.SemiBold,
+              color = MaterialTheme.colorScheme.onSurface,
+              maxLines = 2
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+              text = if (filters.similarSeedTitle.isBlank()) {
+                "Results tab me kisi card par 🔍 button dabao, ya seed keyword daal kar search karo."
+              } else {
+                "Top tags + title keywords se naya search chalega."
+              },
+              fontSize = 11.sp,
+              color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+          }
+        }
       }
     }
 
     Spacer(modifier = Modifier.height(10.dp))
 
-    // High-Outlier Micro-Niches (Sub-topic suggestions that find small-channel gems easily)
-    val microNiches = remember(filters.keyword) {
-      OutlierCalculator.getMicroNichesFor(filters.keyword)
+    val supportsKeywordChips = filters.mode != DiscoveryMode.CHANNEL_SCAN
+    if (supportsKeywordChips) {
+      // Niche Filter Chips
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+      ) {
+        nicheSuggestions.forEach { niche ->
+          FilterChip(
+            selected = filters.keyword.equals(niche, ignoreCase = true),
+            onClick = {
+              searchInput = niche
+              onFiltersChange(filters.copy(keyword = niche))
+            },
+            label = { Text(niche, fontSize = 12.sp) },
+            colors = FilterChipDefaults.filterChipColors(
+              selectedContainerColor = PrimaryViolet.copy(alpha = 0.25f),
+              selectedLabelColor = MaterialTheme.colorScheme.onSurface
+            ),
+            modifier = Modifier.testTag("chip_niche_$niche")
+          )
+        }
+      }
+
+      Spacer(modifier = Modifier.height(10.dp))
+    }
+
+    // High-Outlier Micro-Niches (Gemini keywords when available, hardcoded fallback otherwise)
+    val microNiches = remember(filters.keyword, expandedKeywords) {
+      if (expandedKeywords.isNotEmpty()) expandedKeywords
+      else OutlierCalculator.getMicroNichesFor(filters.keyword)
     }
     Text(
-      text = "🔥 Viral Micro-Niche Ideas (Small-Channel Gems):",
+      text = if (expandedKeywords.isNotEmpty()) {
+        "✨ Gemini Micro-Niche Keywords:"
+      } else {
+        "🔥 Viral Micro-Niche Ideas (Small-Channel Gems):"
+      },
       fontSize = 12.sp,
       fontWeight = FontWeight.SemiBold,
       color = SecondaryCyan
@@ -259,7 +484,8 @@ fun HomeScreen(
         SuggestionChip(
           onClick = {
             searchInput = subNiche
-            val looseWithSubNiche = Presets.applyPreset(PresetType.LOOSE, subNiche)
+            val looseWithSubNiche = Presets.applyPreset(PresetType.LOOSE, filters)
+              .copy(keyword = subNiche, mode = DiscoveryMode.KEYWORD)
             onFiltersChange(looseWithSubNiche)
             if (!isQuotaBlocked && !isSearching) {
               onSearchClick()
@@ -287,19 +513,19 @@ fun HomeScreen(
       PresetChip(
         title = "🎯 Tiny channel gems",
         subtitle = "≤1K subs, ≤2K med, 100x",
-        onClick = { onFiltersChange(Presets.applyPreset(PresetType.TINY_GEMS, filters.keyword)) },
+        onClick = { onFiltersChange(Presets.applyPreset(PresetType.TINY_GEMS, filters)) },
         modifier = Modifier.weight(1f)
       )
       PresetChip(
         title = "⚖️ Balanced",
         subtitle = "≤10K subs, ≤5K med, 50x",
-        onClick = { onFiltersChange(Presets.applyPreset(PresetType.BALANCED, filters.keyword)) },
+        onClick = { onFiltersChange(Presets.applyPreset(PresetType.BALANCED, filters)) },
         modifier = Modifier.weight(1f)
       )
       PresetChip(
         title = "🌊 Loose",
         subtitle = "≤100K subs, 100K+, 20x",
-        onClick = { onFiltersChange(Presets.applyPreset(PresetType.LOOSE, filters.keyword)) },
+        onClick = { onFiltersChange(Presets.applyPreset(PresetType.LOOSE, filters)) },
         modifier = Modifier.weight(1f)
       )
     }
@@ -487,6 +713,72 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
+            // Exclude keywords (e.g. song, edit, status)
+            OutlinedTextField(
+              value = filters.excludeKeywords,
+              onValueChange = { onFiltersChange(filters.copy(excludeKeywords = it)) },
+              label = { Text("Exclude keywords (comma se alag)") },
+              placeholder = { Text("song, edit, status") },
+              singleLine = true,
+              shape = RoundedCornerShape(12.dp),
+              colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                focusedBorderColor = PrimaryViolet,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline
+              ),
+              modifier = Modifier
+                .fillMaxWidth()
+                .testTag("exclude_keywords_input")
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Min likes ratio [Off, 1%, 2%, 5%]
+            Text(
+              text = "Min Likes Ratio (likes / views)",
+              fontSize = 13.sp,
+              color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              listOf(0.0 to "Off", 0.01 to "1%", 0.02 to "2%", 0.05 to "5%").forEach { (ratio, label) ->
+                ElevatedFilterChip(
+                  selected = filters.minLikesRatio == ratio,
+                  onClick = { onFiltersChange(filters.copy(minLikesRatio = ratio)) },
+                  label = { Text(label, fontSize = 12.sp) }
+                )
+              }
+            }
+            if (filters.minLikesRatio > 0.0) {
+              Text(
+                text = "Likes chhupi hui Shorts skip ho jayengi.",
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+              )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Viral Short age [Any, 7d, 30d, 90d]
+            Text(
+              text = "Viral Short Kitna Naya Ho",
+              fontSize = 13.sp,
+              color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              listOf(0 to "Any", 7 to "7d", 30 to "30d", 90 to "90d").forEach { (days, label) ->
+                ElevatedFilterChip(
+                  selected = filters.maxViralAgeDays == days,
+                  onClick = { onFiltersChange(filters.copy(maxViralAgeDays = days)) },
+                  label = { Text(label, fontSize = 12.sp) }
+                )
+              }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
             // Region [IN, US, Any] & Language [Hindi, English, Any]
             Row(
               modifier = Modifier.fillMaxWidth(),
@@ -562,7 +854,7 @@ fun HomeScreen(
     // Find Outliers 🔥 Button
     Button(
       onClick = { onSearchClick() },
-      enabled = filters.keyword.isNotBlank() && !isSearching && !isQuotaBlocked,
+      enabled = canSearch && !isSearching && !isQuotaBlocked,
       shape = RoundedCornerShape(24.dp),
       colors = ButtonDefaults.buttonColors(
         containerColor = AccentRed,
@@ -581,7 +873,13 @@ fun HomeScreen(
         )
       } else {
         Text(
-          text = appStrings.findOutliersBtn,
+          text = when (filters.mode) {
+            DiscoveryMode.MULTI_KEYWORD -> "Merge $multiKeywordCount Keywords"
+            DiscoveryMode.AUTO_EXPAND -> "Auto-Expand & Find Outliers"
+            DiscoveryMode.CHANNEL_SCAN -> "Scan Channel Shorts"
+            DiscoveryMode.SIMILAR_TO_OUTLIER -> "Find Similar Shorts"
+            DiscoveryMode.KEYWORD -> appStrings.findOutliersBtn
+          },
           fontSize = 17.sp,
           fontWeight = FontWeight.Bold,
           color = Color.White
@@ -630,7 +928,15 @@ fun HomeScreen(
         recentSearches.forEach { query ->
           SuggestionChip(
             onClick = {
-              onFiltersChange(filters.copy(keyword = query))
+              onFiltersChange(
+                filters.copy(
+                  mode = DiscoveryMode.KEYWORD,
+                  keyword = query,
+                  similarSeedVideoId = "",
+                  similarSeedTitle = "",
+                  similarSeedTags = emptyList()
+                )
+              )
               if (!isQuotaBlocked) onSearchClick()
             },
             label = { Text(query, fontSize = 12.sp) },

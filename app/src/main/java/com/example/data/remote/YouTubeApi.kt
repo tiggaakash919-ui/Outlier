@@ -36,6 +36,20 @@ interface YouTubeApi {
     @Query("key") apiKey: String
   ): Response<ChannelListResponse>
 
+  @GET("channels")
+  suspend fun getChannelByHandle(
+    @Query("part") part: String = "snippet,statistics,contentDetails",
+    @Query("forHandle") handle: String,
+    @Query("key") apiKey: String
+  ): Response<ChannelListResponse>
+
+  @GET("channels")
+  suspend fun getChannelByUsername(
+    @Query("part") part: String = "snippet,statistics,contentDetails",
+    @Query("forUsername") username: String,
+    @Query("key") apiKey: String
+  ): Response<ChannelListResponse>
+
   @GET("playlistItems")
   suspend fun getPlaylistItems(
     @Query("part") part: String = "contentDetails,snippet",
