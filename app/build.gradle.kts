@@ -1,4 +1,5 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
+import java.util.Properties
 
 plugins {
   alias(libs.plugins.android.application)
@@ -26,7 +27,7 @@ android {
     //   2. coarenaApiKey Gradle property (-PcoarenaApiKey=...)
     //   3. coarenaApiKey in local.properties (gitignored, used for local builds)
     // It is never logged. Users can also override it at runtime from Settings.
-    val localProps = java.util.Properties().apply {
+    val localProps = Properties().apply {
       val f = rootProject.file("local.properties")
       if (f.exists()) f.inputStream().use { load(it) }
     }
