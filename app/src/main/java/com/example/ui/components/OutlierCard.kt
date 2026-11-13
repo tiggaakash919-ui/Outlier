@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -40,6 +42,7 @@ import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,7 +50,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -65,6 +73,7 @@ import com.example.ui.theme.BadgeGreen
 import com.example.ui.theme.BadgeYellow
 import com.example.ui.theme.PrimaryViolet
 import com.example.ui.theme.SecondaryCyan
+import kotlin.math.max
 import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -77,9 +86,22 @@ fun OutlierCard(
   onAiClick: (OutlierVideo) -> Unit,
   onFindSimilar: ((OutlierVideo) -> Unit)? = null,
   onCardClick: ((OutlierVideo) -> Unit)? = null,
+  velocityLabel: String? = null,
+  onVerifyVisible: ((String) -> Unit)? = null,
   modifier: Modifier = Modifier
 ) {
   var showCopyMenu by remember { mutableStateOf(false) }
+
+  // Lazy verification: trigger when an UNVERIFIED card becomes visible.
+  LaunchedEffect(video.videoId, video.shortStatus) {
+    if (video.shortStatus == ShortStatus.UNVERIFIED) {
+      onVerifyVisible?.invoke(video.videoId)
+    }
+  }
+
+  val score = remember(video) { OutlierCalculator.calculateOutlierScore(video) }
+  val videoAge = remember(video.publishedAt) { OutlierCalculator.formatVideoAge(video.publishedAt) }
+  val shownVelocity = velocityLabel ?: OutlierCalculator.fallbackVelocityLabel(video)
 
   Card(
     modifier = modifier
@@ -93,16 +115,15 @@ fun OutlierCard(
     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
   ) {
     Column(modifier = Modifier.padding(14.dp)) {
-      // Row 1: Thumbnail & Header Info
       Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
       ) {
-        // Thumbnail with duration overlay
+        // Thumbnail
         Box(
           modifier = Modifier
-            .width(105.dp)
-            .aspectRatio(9f / 14f) // vertical shorts aspect
+            .width(108.dp)
+            .aspectRatio(9f / 14f)
             .clip(RoundedCornerShape(14.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
         ) {
@@ -112,8 +133,6 @@ fun OutlierCard(
             contentScale = ContentScale.Crop,
             modifier = Modifier.matchParentSize()
           )
-
-          // Duration Badge
           Box(
             modifier = Modifier
               .align(Alignment.BottomEnd)
@@ -129,8 +148,6 @@ fun OutlierCard(
               fontWeight = FontWeight.Bold
             )
           }
-
-          // Play Overlay Icon (opens detail; external open available on detail screen)
           Box(
             modifier = Modifier
               .align(Alignment.Center)
@@ -148,21 +165,18 @@ fun OutlierCard(
           }
         }
 
-        // Details Column
-        Column(
-          modifier = Modifier.weight(1f)
-        ) {
-          // Outlier Multiplier & Views per sub badges
+        Column(modifier = Modifier.weight(1f)) {
+          // Multiplier badge + OutlierScore ring
           Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
           ) {
             val badgeColor = OutlierCalculator.getBadgeColor(video.outlierMultiplier)
             Box(
               modifier = Modifier
                 .clip(RoundedCornerShape(8.dp))
                 .background(badgeColor.copy(alpha = 0.18f))
-                .padding(horizontal = 8.dp, vertical = 3.dp)
+                .padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
               Text(
                 text = "${OutlierCalculator.formatMultiplier(video.outlierMultiplier)}x 🔥",
@@ -171,44 +185,14 @@ fun OutlierCard(
                 fontWeight = FontWeight.Bold
               )
             }
-
-            if (video.viewsPerSub > 0) {
-              Box(
-                modifier = Modifier
-                  .clip(RoundedCornerShape(8.dp))
-                  .background(SecondaryCyan.copy(alpha = 0.15f))
-                  .padding(horizontal = 6.dp, vertical = 3.dp)
-              ) {
-                Text(
-                  text = String.format(Locale.US, "%.1fx subs", video.viewsPerSub),
-                  color = SecondaryCyan,
-                  fontSize = 11.sp,
-                  fontWeight = FontWeight.Medium
-                )
-              }
-            }
-
-            val velocity = OutlierCalculator.calculateViewsPerDay(video.views, video.publishedAt)
-            if (velocity != null) {
-              Box(
-                modifier = Modifier
-                  .clip(RoundedCornerShape(8.dp))
-                  .background(PrimaryViolet.copy(alpha = 0.16f))
-                  .padding(horizontal = 6.dp, vertical = 3.dp)
-              ) {
-                Text(
-                  text = "⚡ $velocity",
-                  color = PrimaryViolet,
-                  fontSize = 10.sp,
-                  fontWeight = FontWeight.SemiBold
-                )
-              }
-            }
+            OutlierScoreRing(
+              score = score,
+              modifier = Modifier.testTag("outlier_score_${video.videoId}")
+            )
           }
 
           Spacer(modifier = Modifier.height(6.dp))
 
-          // Video Title
           Text(
             text = video.title,
             maxLines = 2,
@@ -223,9 +207,8 @@ fun OutlierCard(
 
           Spacer(modifier = Modifier.height(6.dp))
 
-          // Channel and Subscribers
           Text(
-            text = "${video.channelTitle} (${OutlierCalculator.formatSubscribers(video.subscriberCount, video.hiddenSubscriberCount)})",
+            text = "${video.channelTitle} • ${OutlierCalculator.formatSubscribers(video.subscriberCount, video.hiddenSubscriberCount)}",
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -234,67 +217,77 @@ fun OutlierCard(
 
           Spacer(modifier = Modifier.height(4.dp))
 
-          // Views Comparison
           Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
               text = "${OutlierCalculator.formatCompactNumber(video.views)} views",
               fontSize = 13.sp,
               fontWeight = FontWeight.Bold,
-              color = Color.White
+              color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(
-              text = "· usually ~${OutlierCalculator.formatCompactNumber(video.channelMedianViews)}",
+              text = "· median ${OutlierCalculator.formatCompactNumber(video.channelMedianViews)}",
               fontSize = 12.sp,
               color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+          }
+
+          Spacer(modifier = Modifier.height(4.dp))
+
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+          ) {
+            Text(
+              text = videoAge,
+              fontSize = 11.sp,
+              color = SecondaryCyan,
+              fontWeight = FontWeight.Medium
+            )
+            Box(
+              modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(PrimaryViolet.copy(alpha = 0.14f))
+                .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+              Text(
+                text = shownVelocity,
+                fontSize = 10.sp,
+                color = PrimaryViolet,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+              )
+            }
           }
         }
       }
 
       Spacer(modifier = Modifier.height(10.dp))
 
-      // Row 2: Secondary stats & Short Status chip
+      // Mini bar: viral views vs channel median
+      ViewsVsMedianBar(
+        views = video.views,
+        median = video.channelMedianViews,
+        modifier = Modifier.fillMaxWidth()
+      )
+
+      Spacer(modifier = Modifier.height(10.dp))
+
       FlowRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.spacedBy(6.dp)
       ) {
-        // Composite 0-100 outlier score
-        SuggestionChip(
-          onClick = {},
-          label = {
-            Text(
-              text = "Score ${OutlierCalculator.calculateOutlierScore(video)}",
-              fontSize = 11.sp,
-              color = PrimaryViolet,
-              fontWeight = FontWeight.SemiBold
-            )
-          },
-          colors = SuggestionChipDefaults.suggestionChipColors(
-            containerColor = PrimaryViolet.copy(alpha = 0.12f)
-          ),
-          border = null,
-          modifier = Modifier.testTag("outlier_score_${video.videoId}")
-        )
-
-        // Short Status Chip
         when (video.shortStatus) {
           ShortStatus.CONFIRMED_SHORT -> {
             SuggestionChip(
               onClick = {},
               label = { Text("✓ Short", fontSize = 11.sp, color = BadgeGreen) },
               icon = {
-                Icon(
-                  imageVector = Icons.Default.CheckCircle,
-                  contentDescription = null,
-                  tint = BadgeGreen,
-                  modifier = Modifier.size(14.dp)
-                )
+                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = BadgeGreen, modifier = Modifier.size(14.dp))
               },
-              colors = SuggestionChipDefaults.suggestionChipColors(
-                containerColor = BadgeGreen.copy(alpha = 0.12f)
-              ),
+              colors = SuggestionChipDefaults.suggestionChipColors(containerColor = BadgeGreen.copy(alpha = 0.12f)),
               border = null
             )
           }
@@ -303,16 +296,9 @@ fun OutlierCard(
               onClick = {},
               label = { Text("Not a Short", fontSize = 11.sp, color = AccentRed) },
               icon = {
-                Icon(
-                  imageVector = Icons.Default.Warning,
-                  contentDescription = null,
-                  tint = AccentRed,
-                  modifier = Modifier.size(14.dp)
-                )
+                Icon(Icons.Default.Warning, contentDescription = null, tint = AccentRed, modifier = Modifier.size(14.dp))
               },
-              colors = SuggestionChipDefaults.suggestionChipColors(
-                containerColor = AccentRed.copy(alpha = 0.12f)
-              ),
+              colors = SuggestionChipDefaults.suggestionChipColors(containerColor = AccentRed.copy(alpha = 0.12f)),
               border = null
             )
           }
@@ -321,128 +307,85 @@ fun OutlierCard(
               onClick = {},
               label = { Text("Unverified", fontSize = 11.sp, color = BadgeGray) },
               icon = {
-                Icon(
-                  imageVector = Icons.Default.HelpOutline,
-                  contentDescription = null,
-                  tint = BadgeGray,
-                  modifier = Modifier.size(14.dp)
-                )
+                Icon(Icons.Default.HelpOutline, contentDescription = null, tint = BadgeGray, modifier = Modifier.size(14.dp))
               },
-              colors = SuggestionChipDefaults.suggestionChipColors(
-                containerColor = BadgeGray.copy(alpha = 0.12f)
-              ),
+              colors = SuggestionChipDefaults.suggestionChipColors(containerColor = BadgeGray.copy(alpha = 0.12f)),
               border = null
             )
           }
         }
 
-        // One-hit-wonder: huge spike with no other > 5x Short on the channel
+        if (video.viewsPerSub > 0) {
+          SuggestionChip(
+            onClick = {},
+            label = { Text(String.format(Locale.US, "%.1fx subs", video.viewsPerSub), fontSize = 11.sp, color = SecondaryCyan) },
+            colors = SuggestionChipDefaults.suggestionChipColors(containerColor = SecondaryCyan.copy(alpha = 0.12f)),
+            border = null
+          )
+        }
+
         if (video.isOneHitWonder) {
           SuggestionChip(
             onClick = {},
             label = { Text("🎯 One-off spike", fontSize = 11.sp, color = PrimaryViolet) },
-            colors = SuggestionChipDefaults.suggestionChipColors(
-              containerColor = PrimaryViolet.copy(alpha = 0.12f)
-            ),
+            colors = SuggestionChipDefaults.suggestionChipColors(containerColor = PrimaryViolet.copy(alpha = 0.12f)),
             border = null
           )
         }
 
-        // Which merged keyword found this row
         if (video.matchedKeyword.isNotBlank()) {
           SuggestionChip(
             onClick = {},
             label = {
-              Text(
-                text = "🔑 ${video.matchedKeyword}",
-                fontSize = 11.sp,
-                color = SecondaryCyan,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-              )
+              Text("🔑 ${video.matchedKeyword}", fontSize = 11.sp, color = SecondaryCyan, maxLines = 1, overflow = TextOverflow.Ellipsis)
             },
-            colors = SuggestionChipDefaults.suggestionChipColors(
-              containerColor = SecondaryCyan.copy(alpha = 0.12f)
-            ),
+            colors = SuggestionChipDefaults.suggestionChipColors(containerColor = SecondaryCyan.copy(alpha = 0.12f)),
             border = null
           )
         }
 
-        // Re-upload dedupe flag: an earlier upload with >85% title similarity exists
         if (video.isPossibleReupload) {
           SuggestionChip(
             onClick = {},
             label = { Text("♻️ Possible re-upload", fontSize = 11.sp, color = BadgeYellow) },
-            colors = SuggestionChipDefaults.suggestionChipColors(
-              containerColor = BadgeYellow.copy(alpha = 0.14f)
-            ),
+            colors = SuggestionChipDefaults.suggestionChipColors(containerColor = BadgeYellow.copy(alpha = 0.14f)),
             border = null,
             modifier = Modifier.testTag("reupload_flag_${video.videoId}")
           )
         }
 
-        // Likes & Engagement Rate
         if (video.likes > 0) {
           val engRate = OutlierCalculator.calculateEngagementRate(video.views, video.likes)
-          Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(vertical = 6.dp)
-          ) {
-            Icon(
-              imageVector = Icons.Default.ThumbUp,
-              contentDescription = null,
-              tint = MaterialTheme.colorScheme.onSurfaceVariant,
-              modifier = Modifier.size(12.dp)
-            )
+          Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+            Icon(Icons.Default.ThumbUp, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(12.dp))
             Spacer(modifier = Modifier.width(4.dp))
             Text(
-              text = if (engRate != null) {
-                "${OutlierCalculator.formatCompactNumber(video.likes)} ($engRate)"
-              } else {
-                OutlierCalculator.formatCompactNumber(video.likes)
-              },
+              text = if (engRate != null) "${OutlierCalculator.formatCompactNumber(video.likes)} ($engRate)" else OutlierCalculator.formatCompactNumber(video.likes),
               fontSize = 11.sp,
               color = MaterialTheme.colorScheme.onSurfaceVariant
             )
           }
         }
-
-        // Upload Date
-        if (video.publishedAt.length >= 10) {
-          Text(
-            text = video.publishedAt.substring(0, 10),
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(vertical = 6.dp)
-          )
-        }
       }
 
       Spacer(modifier = Modifier.height(8.dp))
 
-      // Row 3: Action Buttons
       Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
       ) {
-        // ▶ Open Short Button
         FilledTonalButton(
           onClick = { onOpenClick(video.videoId) },
           shape = RoundedCornerShape(12.dp),
           modifier = Modifier.testTag("open_short_${video.videoId}")
         ) {
-          Icon(
-            imageVector = Icons.Default.PlayArrow,
-            contentDescription = null,
-            modifier = Modifier.size(16.dp)
-          )
+          Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
           Spacer(modifier = Modifier.width(4.dp))
           Text("Open", fontSize = 13.sp)
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-          // 💾 Save Button
           FilledTonalIconButton(
             onClick = { onSaveToggle(video) },
             shape = RoundedCornerShape(12.dp),
@@ -459,99 +402,153 @@ fun OutlierCard(
             )
           }
 
-          // 📋 Copy Menu Button
           Box {
             FilledTonalIconButton(
               onClick = { showCopyMenu = true },
               shape = RoundedCornerShape(12.dp),
               modifier = Modifier.testTag("copy_button_${video.videoId}")
             ) {
-              Icon(
-                imageVector = Icons.Default.ContentCopy,
-                contentDescription = "Copy details",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp)
-              )
+              Icon(Icons.Default.ContentCopy, contentDescription = "Copy details", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
             }
-
-            DropdownMenu(
-              expanded = showCopyMenu,
-              onDismissRequest = { showCopyMenu = false }
-            ) {
-              DropdownMenuItem(
-                text = { Text("Copy Title") },
-                onClick = {
-                  showCopyMenu = false
-                  onCopyClick("Title", video.title)
-                }
-              )
-              DropdownMenuItem(
-                text = { Text("Copy Link") },
-                onClick = {
-                  showCopyMenu = false
-                  onCopyClick("Link", "https://www.youtube.com/shorts/${video.videoId}")
-                }
-              )
-              DropdownMenuItem(
-                text = { Text("Copy Tags") },
-                onClick = {
-                  showCopyMenu = false
-                  onCopyClick("Tags", video.tags.joinToString(", "))
-                }
-              )
-              DropdownMenuItem(
-                text = { Text("Copy Description") },
-                onClick = {
-                  showCopyMenu = false
-                  onCopyClick("Description", video.description)
-                }
-              )
-              DropdownMenuItem(
-                text = { Text("Copy Channel URL") },
-                onClick = {
-                  showCopyMenu = false
-                  onCopyClick("Channel URL", "https://www.youtube.com/channel/${video.channelId}/shorts")
-                }
-              )
+            DropdownMenu(expanded = showCopyMenu, onDismissRequest = { showCopyMenu = false }) {
+              DropdownMenuItem(text = { Text("Copy Title") }, onClick = { showCopyMenu = false; onCopyClick("Title", video.title) })
+              DropdownMenuItem(text = { Text("Copy Link") }, onClick = { showCopyMenu = false; onCopyClick("Link", "https://www.youtube.com/shorts/${video.videoId}") })
+              DropdownMenuItem(text = { Text("Copy Tags") }, onClick = { showCopyMenu = false; onCopyClick("Tags", video.tags.joinToString(", ")) })
+              DropdownMenuItem(text = { Text("Copy Description") }, onClick = { showCopyMenu = false; onCopyClick("Description", video.description) })
+              DropdownMenuItem(text = { Text("Copy Channel URL") }, onClick = { showCopyMenu = false; onCopyClick("Channel URL", "https://www.youtube.com/channel/${video.channelId}/shorts") })
             }
           }
 
-          // 🔍 Find similar Shorts (needs a callback from Results)
           if (onFindSimilar != null) {
             FilledTonalIconButton(
-              onClick = { onFindSimilar?.invoke(video) },
+              onClick = { onFindSimilar.invoke(video) },
               shape = RoundedCornerShape(12.dp),
-              colors = IconButtonDefaults.filledTonalIconButtonColors(
-                containerColor = SecondaryCyan.copy(alpha = 0.16f)
-              ),
+              colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = SecondaryCyan.copy(alpha = 0.16f)),
               modifier = Modifier.testTag("find_similar_${video.videoId}")
             ) {
-              Icon(
-                imageVector = Icons.Default.Search,
-                contentDescription = "Find similar Shorts",
-                tint = SecondaryCyan,
-                modifier = Modifier.size(18.dp)
-              )
+              Icon(Icons.Default.Search, contentDescription = "Find similar Shorts", tint = SecondaryCyan, modifier = Modifier.size(18.dp))
             }
           }
 
-          // ✨ AI Breakdown Button
           FilledTonalIconButton(
             onClick = { onAiClick(video) },
             shape = RoundedCornerShape(12.dp),
-            colors = IconButtonDefaults.filledTonalIconButtonColors(
-              containerColor = PrimaryViolet.copy(alpha = 0.2f)
-            ),
+            colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = PrimaryViolet.copy(alpha = 0.2f)),
             modifier = Modifier.testTag("ai_breakdown_${video.videoId}")
           ) {
-            Icon(
-              imageVector = Icons.Default.AutoAwesome,
-              contentDescription = "AI Analysis",
-              tint = PrimaryViolet,
-              modifier = Modifier.size(18.dp)
-            )
+            Icon(Icons.Default.AutoAwesome, contentDescription = "AI Analysis", tint = PrimaryViolet, modifier = Modifier.size(18.dp))
           }
         }
+      }
+    }
+  }
+}
+
+@Composable
+fun OutlierScoreRing(
+  score: Int,
+  modifier: Modifier = Modifier,
+  sizeDp: Int = 44
+) {
+  val clamped = score.coerceIn(0, 100)
+  val color = when {
+    clamped >= 75 -> BadgeGreen
+    clamped >= 45 -> BadgeYellow
+    else -> AccentRed
+  }
+  val track = MaterialTheme.colorScheme.surfaceVariant
+  Box(
+    modifier = modifier.size(sizeDp.dp),
+    contentAlignment = Alignment.Center
+  ) {
+    Canvas(modifier = Modifier.matchParentSize()) {
+      val stroke = 5.dp.toPx()
+      val diameter = minOf(size.width, size.height) - stroke
+      val topLeft = Offset((size.width - diameter) / 2f, (size.height - diameter) / 2f)
+      val arcSize = Size(diameter, diameter)
+      drawArc(
+        color = track,
+        startAngle = -90f,
+        sweepAngle = 360f,
+        useCenter = false,
+        topLeft = topLeft,
+        size = arcSize,
+        style = Stroke(width = stroke, cap = StrokeCap.Round)
+      )
+      drawArc(
+        color = color,
+        startAngle = -90f,
+        sweepAngle = 360f * (clamped / 100f),
+        useCenter = false,
+        topLeft = topLeft,
+        size = arcSize,
+        style = Stroke(width = stroke, cap = StrokeCap.Round)
+      )
+    }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+      Text(
+        text = clamped.toString(),
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        color = color,
+        lineHeight = 11.sp
+      )
+    }
+  }
+}
+
+@Composable
+fun ViewsVsMedianBar(
+  views: Long,
+  median: Long,
+  modifier: Modifier = Modifier
+) {
+  val safeMedian = max(1L, median)
+  val maxVal = max(views.toFloat(), safeMedian.toFloat() * 1.2f).coerceAtLeast(1f)
+  val viewsRatio = (views.toFloat() / maxVal).coerceIn(0f, 1f)
+  val medianRatio = (safeMedian.toFloat() / maxVal).coerceIn(0f, 1f)
+  val barTrack = MaterialTheme.colorScheme.surfaceVariant
+
+  Column(modifier = modifier) {
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+      Text("Viral vs median", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      Text(
+        "${OutlierCalculator.formatCompactNumber(views)} / ${OutlierCalculator.formatCompactNumber(safeMedian)}",
+        fontSize = 10.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+      )
+    }
+    Spacer(modifier = Modifier.height(4.dp))
+    Box(
+      modifier = Modifier
+        .fillMaxWidth()
+        .height(10.dp)
+        .clip(RoundedCornerShape(6.dp))
+        .background(barTrack)
+    ) {
+      Box(
+        modifier = Modifier
+          .fillMaxHeight()
+          .fillMaxWidth(viewsRatio)
+          .clip(RoundedCornerShape(6.dp))
+          .background(BadgeGreen.copy(alpha = 0.85f))
+      )
+      // Median marker line
+      Box(
+        modifier = Modifier
+          .fillMaxHeight()
+          .fillMaxWidth(medianRatio)
+      ) {
+        Box(
+          modifier = Modifier
+            .align(Alignment.CenterEnd)
+            .width(2.dp)
+            .fillMaxHeight()
+            .background(BadgeYellow)
+        )
       }
     }
   }

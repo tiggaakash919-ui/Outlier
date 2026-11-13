@@ -114,7 +114,20 @@ data class SavedOutlierEntity(
   val trimmedMeanViews: Long = 0L,
   val p90Views: Long = 0L,
   val highMultiplierShortCount: Int = 0,
-  val isOneHitWonder: Boolean = false
+  val isOneHitWonder: Boolean = false,
+  val folder: String = "Ideas to shoot",
+  val savedTags: String = ""
+)
+
+/** Persisted search history entry with full filter snapshot for one-tap re-run. */
+@Entity(tableName = "search_history")
+data class SearchHistoryEntity(
+  @PrimaryKey(autoGenerate = true) val id: Long = 0,
+  val timestamp: Long,
+  val displayLabel: String,
+  val mode: String,
+  val filtersJson: String,
+  val dedupeKey: String
 )
 
 @Entity(tableName = "ai_cache")

@@ -59,7 +59,10 @@ data class OutlierVideo(
   val matchedKeyword: String = "",
   /** Same Short re-uploaded: this row lost to an earlier upload with >85% title similarity. */
   val isPossibleReupload: Boolean = false,
-  val reuploadOfVideoId: String? = null
+  val reuploadOfVideoId: String? = null,
+  /** Saved organization (used in Saved screen). */
+  val savedFolder: String = "Ideas to shoot",
+  val savedUserTags: List<String> = emptyList()
 )
 
 data class NearMissVideo(
@@ -329,4 +332,12 @@ data class ApiKeyUi(
   val index: Int = 0,
   val masked: String = "",
   val isActive: Boolean = false
+)
+
+data class SearchHistoryEntry(
+  val id: Long = 0,
+  val timestamp: Long = 0L,
+  val displayLabel: String = "",
+  val mode: DiscoveryMode = DiscoveryMode.KEYWORD,
+  val filters: FilterOptions = FilterOptions()
 )

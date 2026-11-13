@@ -12,6 +12,7 @@ import com.example.data.repository.KeyRepository
 import com.example.data.repository.OutlierRepository
 import com.example.data.repository.QuotaTracker
 import com.example.data.repository.SavedRepository
+import com.example.data.repository.SearchHistoryRepository
 import com.example.data.repository.SearchResult
 import com.example.data.repository.TrendReportResult
 import com.example.data.repository.VelocityRepository
@@ -30,7 +31,10 @@ import com.example.domain.OutlierVideo
 import com.example.domain.PresetType
 import com.example.domain.Presets
 import com.example.domain.QuotaStatus
+import com.example.domain.SearchHistoryEntry
+import com.example.domain.ShortStatus
 import com.example.domain.TrendReportUiState
+import com.example.domain.VelocityCalculator
 import com.example.domain.VelocityState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -46,6 +50,9 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import java.util.concurrent.ConcurrentHashMap
 
 enum class Screen {
   HOME,
@@ -64,7 +71,8 @@ class MainViewModel(
   private val quotaTracker: QuotaTracker,
   private val apiKeyManager: ApiKeyManager,
   private val settingsStore: SettingsStore,
-  private val database: AppDatabase
+  private val database: AppDatabase,
+  private val searchHistoryRepository: SearchHistoryRepository
 ) : ViewModel() {
 
   val hasApiKey: StateFlow<Boolean> = settingsStore.hasApiKey
@@ -130,10 +138,13 @@ class MainViewModel(
 
   val progressMessage: StateFlow<String?> = outlierRepository.progressFlow
 
-  private val _recentSearches = MutableStateFlow<List<String>>(
-    listOf("motivation", "cooking", "tech facts", "crypto", "comedy")
-  )
-  val recentSearches: StateFlow<List<String>> = _recentSearches.asStateFlow()
+  val searchHistory: StateFlow<List<SearchHistoryEntry>> = searchHistoryRepository.recentFlow(20)
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+  /** Kept for compatibility with older UI wiring; prefer [searchHistory]. */
+  val recentSearches: StateFlow<List<String>> = searchHistory
+    .map { entries -> entries.map { it.displayLabel } }
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
   /** AUTO_EXPAND chips generated on Home (Gemini or offline fallback). */
   private val _expandedKeywords = MutableStateFlow<List<String>>(emptyList())
@@ -169,6 +180,13 @@ class MainViewModel(
 
   private val _trendReportUiState = MutableStateFlow<TrendReportUiState>(TrendReportUiState.Idle)
   val trendReportUiState: StateFlow<TrendReportUiState> = _trendReportUiState.asStateFlow()
+
+  /** Real velocity labels for current result cards (videoId -> label). */
+  private val _velocityLabels = MutableStateFlow<Map<String, String>>(emptyMap())
+  val velocityLabels: StateFlow<Map<String, String>> = _velocityLabels.asStateFlow()
+
+  private val lazyVerifyInFlight = ConcurrentHashMap.newKeySet<String>()
+  private val lazyVerifySemaphore = Semaphore(4)
 
   private val _userMessages = MutableSharedFlow<String>()
   val userMessages: SharedFlow<String> = _userMessages.asSharedFlow()
@@ -242,14 +260,8 @@ class MainViewModel(
       return
     }
 
-    val recentLabel = when (trimmedFilters.mode) {
-      DiscoveryMode.MULTI_KEYWORD ->
-        DiscoveryHelpers.parseKeywordList(trimmedFilters.multiKeywords).firstOrNull()
-      DiscoveryMode.CHANNEL_SCAN, DiscoveryMode.SIMILAR_TO_OUTLIER -> null
-      else -> trimmedFilters.keyword.ifBlank { null }
-    }
-    if (recentLabel != null && !_recentSearches.value.contains(recentLabel)) {
-      _recentSearches.value = listOf(recentLabel) + _recentSearches.value.take(5)
+    viewModelScope.launch {
+      runCatching { searchHistoryRepository.record(trimmedFilters) }
     }
 
     _isSearching.value = true
@@ -268,6 +280,7 @@ class MainViewModel(
           _nearMisses.value = result.nearMisses
           _debugStats.value = result.debugStats
           _nextPageToken.value = result.nextPageToken
+          refreshVelocityLabels(result.outliers)
           _isSearching.value = false
         }
         is SearchResult.Error -> {
@@ -277,6 +290,62 @@ class MainViewModel(
             _onboardingError.value = "Key kaam nahi kar rahi, nayi key daalo"
             refreshMaskedKey()
           }
+        }
+      }
+    }
+  }
+
+  fun rerunSearchHistory(entry: SearchHistoryEntry) {
+    if (_isSearching.value) return
+    _filters.value = entry.filters.withTrimmedKeyword()
+    startSearch(forceRefresh = false)
+  }
+
+  private fun refreshVelocityLabels(videos: List<OutlierVideo>) {
+    if (videos.isEmpty()) {
+      _velocityLabels.value = emptyMap()
+      return
+    }
+    viewModelScope.launch {
+      val labels = mutableMapOf<String, String>()
+      for (v in videos.distinctBy { it.videoId }) {
+        val snaps = runCatching { velocityRepository.getSnapshots(v.videoId) }.getOrDefault(emptyList())
+        labels[v.videoId] = if (snaps.size >= 2) {
+          VelocityCalculator.compute(snaps).label
+        } else {
+          OutlierCalculator.fallbackVelocityLabel(v)
+        }
+      }
+      _velocityLabels.value = labels
+    }
+  }
+
+  /**
+   * Trigger on-scroll lazy verification for UNVERIFIED candidates (req 8).
+   * Safe/idempotent and bounded by an in-flight set + semaphore.
+   */
+  fun requestLazyVerification(videoId: String) {
+    if (videoId.isBlank() || !lazyVerifyInFlight.add(videoId)) return
+    viewModelScope.launch {
+      try {
+        lazyVerifySemaphore.withPermit {
+          val current = _outliers.value.firstOrNull { it.videoId == videoId } ?: return@withPermit
+          if (current.shortStatus != ShortStatus.UNVERIFIED) return@withPermit
+          val status = outlierRepository.verifyShortOnDemand(videoId)
+          if (status == ShortStatus.UNVERIFIED) return@withPermit
+          _outliers.value = _outliers.value.map {
+            if (it.videoId == videoId) it.copy(shortStatus = status) else it
+          }
+          val selected = _selectedDetailVideo.value
+          if (selected?.videoId == videoId) {
+            _selectedDetailVideo.value = selected.copy(shortStatus = status)
+          }
+        }
+      } finally {
+        // Allow re-check later only if still unresolved; keep resolved IDs out.
+        val resolved = _outliers.value.firstOrNull { it.videoId == videoId }?.shortStatus
+        if (resolved == ShortStatus.UNVERIFIED || resolved == null) {
+          lazyVerifyInFlight.remove(videoId)
         }
       }
     }
@@ -364,10 +433,12 @@ class MainViewModel(
           // Merge and deduplicate by videoId
           val existingIds = _outliers.value.map { it.videoId }.toSet()
           val newItems = result.outliers.filter { !existingIds.contains(it.videoId) }
-          _outliers.value = _outliers.value + newItems
+          val merged = _outliers.value + newItems
+          _outliers.value = merged
           _nearMisses.value = result.nearMisses
           _debugStats.value = result.debugStats
           _nextPageToken.value = result.nextPageToken
+          refreshVelocityLabels(merged)
           _isSearching.value = false
         }
         is SearchResult.Error -> {
@@ -398,6 +469,7 @@ class MainViewModel(
       )
     }
     _filters.value = updatedFilters
+    viewModelScope.launch { runCatching { searchHistoryRepository.record(updatedFilters) } }
 
     _isSearching.value = true
     viewModelScope.launch {
@@ -414,10 +486,12 @@ class MainViewModel(
           result.outliers.forEach { newVid ->
             existingMap[newVid.videoId] = newVid
           }
-          _outliers.value = existingMap.values.toList()
+          val merged = existingMap.values.toList()
+          _outliers.value = merged
           _nearMisses.value = result.nearMisses
           _debugStats.value = result.debugStats
           _nextPageToken.value = result.nextPageToken
+          refreshVelocityLabels(merged)
           _isSearching.value = false
         }
         is SearchResult.Error -> {
@@ -531,6 +605,14 @@ class MainViewModel(
     }
   }
 
+  fun updateSavedFolder(videoId: String, folder: String) {
+    viewModelScope.launch { savedRepository.updateFolder(videoId, folder) }
+  }
+
+  fun updateSavedTags(videoId: String, tags: List<String>) {
+    viewModelScope.launch { savedRepository.updateSavedTags(videoId, tags) }
+  }
+
   fun analyzeWithAi(video: OutlierVideo, forceRefresh: Boolean = false) {
     _aiUiState.value = AiUiState.Loading
     viewModelScope.launch {
@@ -610,6 +692,7 @@ class MainViewModel(
   fun clearAllData() {
     viewModelScope.launch {
       clearCacheInternal()
+      runCatching { database.searchHistoryDao().clearAll() }
       savedRepository.clearAll()
       velocityRepository.clearVelocityData()
       database.quotaDao().clearQuota()
@@ -627,7 +710,8 @@ class MainViewModel(
     private val quotaTracker: QuotaTracker,
     private val apiKeyManager: ApiKeyManager,
     private val settingsStore: SettingsStore,
-    private val database: AppDatabase
+    private val database: AppDatabase,
+    private val searchHistoryRepository: SearchHistoryRepository
   ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -640,7 +724,8 @@ class MainViewModel(
         quotaTracker = quotaTracker,
         apiKeyManager = apiKeyManager,
         settingsStore = settingsStore,
-        database = database
+        database = database,
+        searchHistoryRepository = searchHistoryRepository
       ) as T
     }
   }

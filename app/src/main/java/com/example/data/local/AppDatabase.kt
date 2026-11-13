@@ -19,9 +19,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     NicheCacheEntity::class,
     ViewSnapshotEntity::class,
     TrackedVideoEntity::class,
-    WatchedChannelEntity::class
+    WatchedChannelEntity::class,
+    SearchHistoryEntity::class
   ],
-  version = 7,
+  version = 8,
   exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -36,6 +37,7 @@ abstract class AppDatabase : RoomDatabase() {
   abstract fun viewSnapshotDao(): ViewSnapshotDao
   abstract fun trackedVideoDao(): TrackedVideoDao
   abstract fun watchedChannelDao(): WatchedChannelDao
+  abstract fun searchHistoryDao(): SearchHistoryDao
 
   companion object {
     @Volatile
@@ -341,6 +343,38 @@ abstract class AppDatabase : RoomDatabase() {
       }
     }
 
+    /**
+     * v7 -> v8: search history persistence and saved organization (folder/tags).
+     */
+    val MIGRATION_7_8 = object : Migration(7, 8) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+          """
+          CREATE TABLE IF NOT EXISTS `search_history` (
+            `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            `timestamp` INTEGER NOT NULL,
+            `displayLabel` TEXT NOT NULL,
+            `mode` TEXT NOT NULL,
+            `filtersJson` TEXT NOT NULL,
+            `dedupeKey` TEXT NOT NULL
+          )
+          """.trimIndent()
+        )
+        db.execSQL(
+          "CREATE INDEX IF NOT EXISTS `index_search_history_timestamp` ON `search_history` (`timestamp`)"
+        )
+        db.execSQL(
+          "CREATE INDEX IF NOT EXISTS `index_search_history_dedupeKey` ON `search_history` (`dedupeKey`)"
+        )
+        db.execSQL(
+          "ALTER TABLE `saved_outliers` ADD COLUMN `folder` TEXT NOT NULL DEFAULT 'Ideas to shoot'"
+        )
+        db.execSQL(
+          "ALTER TABLE `saved_outliers` ADD COLUMN `savedTags` TEXT NOT NULL DEFAULT ''"
+        )
+      }
+    }
+
     fun getDatabase(context: Context): AppDatabase {
       return INSTANCE ?: synchronized(this) {
         val instance = Room.databaseBuilder(
@@ -354,7 +388,8 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_3_4,
             MIGRATION_4_5,
             MIGRATION_5_6,
-            MIGRATION_6_7
+            MIGRATION_6_7,
+            MIGRATION_7_8
           )
           .build()
         INSTANCE = instance

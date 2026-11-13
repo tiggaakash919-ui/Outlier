@@ -789,6 +789,35 @@ class OutlierRepository(
     }
   }
 
+  /**
+   * Lazily verifies a Short on demand (used for items beyond the initial 30).
+   * Uses `short_verification_cache` and is safe to call repeatedly/concurrently.
+   */
+  suspend fun verifyShortOnDemand(videoId: String): ShortStatus {
+    if (videoId.isBlank()) return ShortStatus.UNVERIFIED
+    val cached = verificationCacheDao.getVerification(videoId)
+    if (cached != null) {
+      return when {
+        cached.isUnverified -> ShortStatus.UNVERIFIED
+        cached.isShort -> ShortStatus.CONFIRMED_SHORT
+        else -> ShortStatus.NOT_A_SHORT
+      }
+    }
+    val verified = shortsVerifier.verifyShort(videoId)
+    try {
+      verificationCacheDao.insertVerification(
+        ShortVerificationCacheEntity(
+          videoId = videoId,
+          isShort = verified == ShortStatus.CONFIRMED_SHORT,
+          isUnverified = verified == ShortStatus.UNVERIFIED,
+          timestamp = System.currentTimeMillis()
+        )
+      )
+    } catch (_: Exception) {
+    }
+    return verified
+  }
+
   private suspend fun writeCachedResult(
     cacheKey: String,
     outliers: List<OutlierVideo>,

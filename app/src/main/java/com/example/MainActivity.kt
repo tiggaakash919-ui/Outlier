@@ -137,7 +137,8 @@ class MainActivity : ComponentActivity() {
       quotaTracker = appContainer.quotaTracker,
       apiKeyManager = appContainer.apiKeyManager,
       settingsStore = appContainer.settingsStore,
-      database = appContainer.database
+      database = appContainer.database,
+      searchHistoryRepository = appContainer.searchHistoryRepository
     )
   }
 
@@ -217,9 +218,11 @@ fun MainAppContent(
   val isSearching by viewModel.isSearching.collectAsStateWithLifecycle()
   val progressMessage by viewModel.progressMessage.collectAsStateWithLifecycle()
   val recentSearches by viewModel.recentSearches.collectAsStateWithLifecycle()
+  val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
   val expandedKeywords by viewModel.expandedKeywords.collectAsStateWithLifecycle()
   val isExpandingKeywords by viewModel.isExpandingKeywords.collectAsStateWithLifecycle()
   val outliers by viewModel.outliers.collectAsStateWithLifecycle()
+  val velocityLabels by viewModel.velocityLabels.collectAsStateWithLifecycle()
   val nearMisses by viewModel.nearMisses.collectAsStateWithLifecycle()
   val debugStats by viewModel.debugStats.collectAsStateWithLifecycle()
   val nextPageToken by viewModel.nextPageToken.collectAsStateWithLifecycle()
@@ -352,11 +355,15 @@ fun MainAppContent(
             isSearching = isSearching,
             progressMessage = progressMessage,
             recentSearches = recentSearches,
+            searchHistory = searchHistory,
             expandedKeywords = expandedKeywords,
             isExpandingKeywords = isExpandingKeywords,
+            themeMode = themeMode,
+            onThemeModeChange = { viewModel.setThemeMode(it) },
             onExpandKeywords = { viewModel.expandKeywordsNow() },
             onFiltersChange = { viewModel.updateFilters(it) },
-            onSearchClick = { viewModel.startSearch(forceRefresh = false) }
+            onSearchClick = { viewModel.startSearch(forceRefresh = false) },
+            onHistoryRerun = { viewModel.rerunSearchHistory(it) }
           )
         }
         composable(ROUTE_RESULTS) {
@@ -374,6 +381,10 @@ fun MainAppContent(
             progressMessage = progressMessage,
             nextPageToken = nextPageToken,
             quotaStatus = quotaStatus,
+            velocityLabels = velocityLabels,
+            themeMode = themeMode,
+            onThemeModeChange = { viewModel.setThemeMode(it) },
+            onRefresh = { viewModel.startSearch(forceRefresh = true) },
             onLoadMore = { viewModel.loadMore() },
             onTryMore = { viewModel.tryMore(it) },
             onLoosenFilters = { viewModel.loosenFilters() },
@@ -387,6 +398,7 @@ fun MainAppContent(
               detailReturnScreen = Screen.RESULTS
               viewModel.openVideoDetail(it)
             },
+            onVerifyShort = { viewModel.requestLazyVerification(it) },
             trendReportUiState = trendReportUiState,
             onGenerateTrendReport = { selected -> viewModel.generateTrendReport(selected) },
             onResetTrendReport = { viewModel.resetTrendReportState() }
@@ -395,7 +407,11 @@ fun MainAppContent(
         composable(ROUTE_SAVED) {
           SavedScreen(
             savedList = savedOutliers,
+            themeMode = themeMode,
+            onThemeModeChange = { viewModel.setThemeMode(it) },
             onRemove = { viewModel.removeSaved(it) },
+            onUpdateFolder = { id, folder -> viewModel.updateSavedFolder(id, folder) },
+            onUpdateTags = { id, tags -> viewModel.updateSavedTags(id, tags) },
             onAiClick = { openAiSheetFor(it) },
             onCardClick = {
               detailReturnScreen = Screen.SAVED
@@ -409,6 +425,8 @@ fun MainAppContent(
             snapshots = detailSnapshots,
             tracked = detailTracked,
             watchedChannels = watchedChannels,
+            aiUiState = aiUiState,
+            aiLanguage = aiLanguage,
             onBack = {
               viewModel.closeVideoDetail()
               viewModel.navigateTo(detailReturnScreen)
@@ -424,7 +442,9 @@ fun MainAppContent(
                 baselineMedian = video.channelMedianViews
               )
             },
-            onUnfollowChannel = { viewModel.unfollowWatchedChannel(it) }
+            onUnfollowChannel = { viewModel.unfollowWatchedChannel(it) },
+            onFindSimilar = { viewModel.findSimilar(it) },
+            onAnalyzeAi = { video, force -> viewModel.analyzeWithAi(video, force) }
           )
         }
         composable(ROUTE_SETTINGS) {

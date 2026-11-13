@@ -6,6 +6,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -32,20 +34,27 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SearchOff
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ElevatedFilterChip
@@ -61,6 +70,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -74,6 +84,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -81,11 +92,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.BookmarkBorder
-import androidx.compose.material3.Checkbox
+import com.example.data.repository.SavedRepository
 import com.example.domain.DebugStats
 import com.example.domain.DiscoveryMode
 import com.example.domain.EmptyStageReason
@@ -104,7 +113,10 @@ import com.example.ui.theme.BadgeYellow
 import com.example.ui.theme.LocalAppStrings
 import com.example.ui.theme.PrimaryViolet
 import com.example.ui.theme.SecondaryCyan
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.time.Year
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
@@ -118,8 +130,12 @@ fun ResultsScreen(
   progressMessage: String?,
   nextPageToken: String?,
   quotaStatus: QuotaStatus = QuotaStatus(),
+  velocityLabels: Map<String, String> = emptyMap(),
+  themeMode: String = "DARK",
+  onThemeModeChange: (String) -> Unit = {},
+  onRefresh: () -> Unit = {},
   onLoadMore: () -> Unit,
-  onTryMore: (String) -> Unit, // variant or time slice
+  onTryMore: (String) -> Unit,
   onLoosenFilters: () -> Unit,
   onApplyEmptyStageFix: (EmptyStageReason) -> Unit = {},
   onSaveToggle: (OutlierVideo) -> Unit,
@@ -128,6 +144,7 @@ fun ResultsScreen(
   similarSeedTitle: String = "",
   onFindSimilar: ((OutlierVideo) -> Unit)? = null,
   onCardClick: (OutlierVideo) -> Unit = {},
+  onVerifyShort: (String) -> Unit = {},
   trendReportUiState: TrendReportUiState = TrendReportUiState.Idle,
   onGenerateTrendReport: (List<OutlierVideo>) -> Unit = {},
   onResetTrendReport: () -> Unit = {},
@@ -146,7 +163,6 @@ fun ResultsScreen(
   var trendSelectionMode by remember { mutableStateOf(false) }
   var selectedTrendIds by remember { mutableStateOf<Set<String>>(emptySet()) }
 
-  // Filtered and sorted list
   val displayList by remember(outliers, selectedSort, showNonShorts) {
     derivedStateOf {
       var list = outliers
@@ -164,20 +180,67 @@ fun ResultsScreen(
     }
   }
 
-  fun copyToClipboard(label: String, content: String) {
-    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    val clip = ClipData.newPlainText(label, content)
-    clipboard.setPrimaryClip(clip)
-    coroutineScope.launch {
-      snackbarHostState.showSnackbar("✓ $label copied to clipboard")
+  val createResultsCsvLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.CreateDocument("text/csv")
+  ) { uri: Uri? ->
+    if (uri != null) {
+      coroutineScope.launch {
+        try {
+          val csvBytes = withContext(Dispatchers.Default) {
+            SavedRepository.generateCsvBytesWithBom(displayList, includeSavedColumns = false)
+          }
+          withContext(Dispatchers.IO) {
+            context.contentResolver.openOutputStream(uri)?.use { out ->
+              out.write(csvBytes)
+              out.flush()
+            }
+          }
+          Toast.makeText(context, "✓ Results CSV exported", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+          Toast.makeText(context, "CSV export failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+        }
+      }
     }
   }
 
+  fun shareResultsCsv() {
+    if (displayList.isEmpty()) {
+      Toast.makeText(context, "Export ke liye results chahiye", Toast.LENGTH_SHORT).show()
+      return
+    }
+    coroutineScope.launch {
+      try {
+        val csvBytes = withContext(Dispatchers.Default) {
+          SavedRepository.generateCsvBytesWithBom(displayList, includeSavedColumns = false)
+        }
+        val fileUri = withContext(Dispatchers.IO) {
+          val exportDir = File(context.cacheDir, "exports")
+          if (!exportDir.exists()) exportDir.mkdirs()
+          val csvFile = File(exportDir, "outlier_radar_results.csv")
+          csvFile.writeBytes(csvBytes)
+          FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", csvFile)
+        }
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+          type = "text/csv"
+          putExtra(Intent.EXTRA_STREAM, fileUri)
+          putExtra(Intent.EXTRA_SUBJECT, "Outlier Radar - Results CSV")
+          addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(shareIntent, "Share Results CSV"))
+      } catch (e: Exception) {
+        Toast.makeText(context, "Share failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+      }
+    }
+  }
+
+  fun copyToClipboard(label: String, content: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText(label, content))
+    coroutineScope.launch { snackbarHostState.showSnackbar("✓ $label copied to clipboard") }
+  }
+
   fun openShort(videoId: String) {
-    val intent = Intent(
-      Intent.ACTION_VIEW,
-      Uri.parse("https://www.youtube.com/shorts/$videoId")
-    )
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/shorts/$videoId"))
     try {
       context.startActivity(intent)
     } catch (_: Exception) {
@@ -185,7 +248,15 @@ fun ResultsScreen(
     }
   }
 
-  Box(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+  PullToRefreshBox(
+    isRefreshing = isLoading,
+    onRefresh = {
+      if (!isLoading && (debugStats.searchReturned > 0 || outliers.isNotEmpty() || nextPageToken != null || trimmedKeyword.isNotBlank())) {
+        onRefresh() // forceRefresh=true via caller
+      }
+    },
+    modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+  ) {
     LazyColumn(
       modifier = Modifier
         .fillMaxSize()
@@ -195,31 +266,57 @@ fun ResultsScreen(
       item {
         Spacer(modifier = Modifier.height(10.dp))
 
-        // Header: "{N} outliers mile for '{kw}'" (trimmed keyword)
-        Text(
-          text = appStrings.formatResultsHeader(context, displayList.size, trimmedKeyword),
-          fontSize = 20.sp,
-          fontWeight = FontWeight.Bold,
-          color = MaterialTheme.colorScheme.onBackground,
-          modifier = Modifier.testTag("results_header_title")
-        )
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Text(
+            text = appStrings.formatResultsHeader(context, displayList.size, trimmedKeyword),
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground,
+            modifier = Modifier.weight(1f).testTag("results_header_title")
+          )
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            if (displayList.isNotEmpty()) {
+              IconButton(
+                onClick = { createResultsCsvLauncher.launch("outlier_radar_results.csv") },
+                modifier = Modifier.testTag("export_results_csv_button")
+              ) {
+                Icon(Icons.Default.FileDownload, contentDescription = "Export CSV", tint = PrimaryViolet)
+              }
+              IconButton(
+                onClick = { shareResultsCsv() },
+                modifier = Modifier.testTag("share_results_csv_button")
+              ) {
+                Icon(Icons.Default.Share, contentDescription = "Share CSV", tint = SecondaryCyan)
+              }
+            }
+            IconButton(onClick = {
+              onThemeModeChange(if (themeMode.equals("LIGHT", true)) "DARK" else "LIGHT")
+            }) {
+              Icon(
+                imageVector = if (themeMode.equals("LIGHT", true)) Icons.Default.DarkMode else Icons.Default.LightMode,
+                contentDescription = "Toggle theme",
+                tint = MaterialTheme.colorScheme.onBackground
+              )
+            }
+          }
+        }
 
         if (mode != DiscoveryMode.KEYWORD) {
           Spacer(modifier = Modifier.height(6.dp))
           Card(
             shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = PrimaryViolet.copy(alpha = 0.12f)),
-            modifier = Modifier
-              .fillMaxWidth()
-              .testTag("results_mode_banner")
+            modifier = Modifier.fillMaxWidth().testTag("results_mode_banner")
           ) {
             val bannerText = when (mode) {
               DiscoveryMode.MULTI_KEYWORD -> "🔀 Multi-keyword merge — duplicate videos hata diye gaye hain."
               DiscoveryMode.AUTO_EXPAND -> "✨ Gemini micro-niches se merged search."
-              DiscoveryMode.CHANNEL_SCAN ->
-                "📺 Channel scan — har Short us channel ke median se compare hua hai."
-              DiscoveryMode.SIMILAR_TO_OUTLIER ->
-                "🔍 Similar to: ${similarSeedTitle.ifBlank { "chuna gaya Short" }}"
+              DiscoveryMode.CHANNEL_SCAN -> "📺 Channel scan — har Short us channel ke median se compare hua hai."
+              DiscoveryMode.SIMILAR_TO_OUTLIER -> "🔍 Similar to: ${similarSeedTitle.ifBlank { "chuna gaya Short" }}"
               DiscoveryMode.KEYWORD -> ""
             }
             Text(
@@ -231,87 +328,41 @@ fun ResultsScreen(
           }
         }
 
-        // Only show Sort Selector & Disclaimer when there are results to sort
         if (displayList.isNotEmpty() || outliers.isNotEmpty()) {
           Spacer(modifier = Modifier.height(8.dp))
-
-          // Sort Selector
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            Icon(
-              imageVector = Icons.Default.FilterList,
-              contentDescription = null,
-              tint = PrimaryViolet,
-              modifier = Modifier.size(16.dp)
-            )
+          Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.FilterList, contentDescription = null, tint = PrimaryViolet, modifier = Modifier.size(16.dp))
             Spacer(modifier = Modifier.width(6.dp))
-            Text(
-              text = "Sort:",
-              fontSize = 12.sp,
-              color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Text("Sort:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
           }
-
           Spacer(modifier = Modifier.height(6.dp))
-
-          FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-          ) {
+          FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             SortOption.entries.forEach { option ->
-              FilterChip(
-                selected = selectedSort == option,
-                onClick = { selectedSort = option },
-                label = { Text(option.label, fontSize = 11.sp) }
-              )
+              FilterChip(selected = selectedSort == option, onClick = { selectedSort = option }, label = { Text(option.label, fontSize = 11.sp) })
             }
           }
-
           Spacer(modifier = Modifier.height(6.dp))
-
-          // Toggle: "Show non-Shorts"
           Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
           ) {
-            Text(
-              text = appStrings.showNonShorts,
-              fontSize = 12.sp,
-              color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Text(appStrings.showNonShorts, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Switch(
               checked = showNonShorts,
               onCheckedChange = { showNonShorts = it },
-              colors = SwitchDefaults.colors(
-                checkedThumbColor = PrimaryViolet,
-                checkedTrackColor = PrimaryViolet.copy(alpha = 0.5f)
-              ),
+              colors = SwitchDefaults.colors(checkedThumbColor = PrimaryViolet, checkedTrackColor = PrimaryViolet.copy(alpha = 0.5f)),
               modifier = Modifier.testTag("toggle_show_non_shorts")
             )
           }
-
-          // Dismissible Disclaimer
           AnimatedVisibility(visible = showDisclaimer) {
             Card(
               shape = RoundedCornerShape(12.dp),
               colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)),
-              modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 6.dp)
+              modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)
             ) {
-              Row(
-                modifier = Modifier.padding(10.dp),
-                verticalAlignment = Alignment.Top
-              ) {
-                Icon(
-                  imageVector = Icons.Default.Info,
-                  contentDescription = null,
-                  tint = SecondaryCyan,
-                  modifier = Modifier.size(18.dp).padding(top = 2.dp)
-                )
+              Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.Top) {
+                Icon(Icons.Default.Info, contentDescription = null, tint = SecondaryCyan, modifier = Modifier.size(18.dp).padding(top = 2.dp))
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                   text = appStrings.resultsDisclaimer,
@@ -320,16 +371,8 @@ fun ResultsScreen(
                   lineHeight = 16.sp,
                   modifier = Modifier.weight(1f)
                 )
-                IconButton(
-                  onClick = { showDisclaimer = false },
-                  modifier = Modifier.size(20.dp)
-                ) {
-                  Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Dismiss",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(14.dp)
-                  )
+                IconButton(onClick = { showDisclaimer = false }, modifier = Modifier.size(20.dp)) {
+                  Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp))
                 }
               }
             }
@@ -337,7 +380,6 @@ fun ResultsScreen(
         }
       }
 
-      // Loading state with Progress banner + Shimmer Placeholder Cards
       if (isLoading) {
         item {
           Card(
@@ -350,11 +392,7 @@ fun ResultsScreen(
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.Center
             ) {
-              CircularProgressIndicator(
-                color = PrimaryViolet,
-                modifier = Modifier.size(24.dp),
-                strokeWidth = 2.5.dp
-              )
+              CircularProgressIndicator(color = PrimaryViolet, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
               Spacer(modifier = Modifier.width(12.dp))
               Text(
                 text = progressMessage ?: "Outliers dhoonde ja rahe hain...",
@@ -365,13 +403,9 @@ fun ResultsScreen(
             }
           }
         }
-
-        items(3) {
-          ShimmerOutlierCardPlaceholder()
-        }
+        items(3) { ShimmerOutlierCardPlaceholder() }
       }
 
-      // Smart Empty state (Requirement 4)
       if (!isLoading && displayList.isEmpty()) {
         val detectedStage = OutlierCalculator.detectEmptyStage(debugStats)
         val detailMessage = if (
@@ -389,20 +423,9 @@ fun ResultsScreen(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             modifier = Modifier.fillMaxWidth()
           ) {
-            Column(
-              modifier = Modifier.padding(16.dp).fillMaxWidth(),
-              horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-              Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-              ) {
-                Icon(
-                  imageVector = Icons.Default.SearchOff,
-                  contentDescription = null,
-                  tint = AccentRed,
-                  modifier = Modifier.size(28.dp)
-                )
+            Column(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+              Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                Icon(Icons.Default.SearchOff, contentDescription = null, tint = AccentRed, modifier = Modifier.size(28.dp))
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                   text = detailMessage,
@@ -414,59 +437,27 @@ fun ResultsScreen(
                 )
               }
               Spacer(modifier = Modifier.height(6.dp))
-              Text(
-                text = appStrings.resultsEmptySubtitle,
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-              )
+              Text(appStrings.resultsEmptySubtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
               Spacer(modifier = Modifier.height(12.dp))
-
-              Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-              ) {
-                // Targeted one-tap fix button (keyword-ish modes only)
+              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (mode != DiscoveryMode.CHANNEL_SCAN) {
                   Button(
                     onClick = { onApplyEmptyStageFix(detectedStage) },
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
-                    modifier = Modifier
-                      .weight(1f)
-                      .testTag("empty_stage_fix_button")
+                    modifier = Modifier.weight(1f).testTag("empty_stage_fix_button")
                   ) {
-                    Icon(
-                      imageVector = Icons.Default.AutoFixHigh,
-                      contentDescription = null,
-                      modifier = Modifier.size(15.dp),
-                      tint = Color.White
-                    )
+                    Icon(Icons.Default.AutoFixHigh, contentDescription = null, modifier = Modifier.size(15.dp), tint = Color.White)
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                      text = detectedStage.fixButtonLabel,
-                      fontSize = 12.sp,
-                      fontWeight = FontWeight.SemiBold,
-                      color = Color.White,
-                      maxLines = 1
-                    )
+                    Text(detectedStage.fixButtonLabel, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = 1)
                   }
                 }
-
-                // Existing "Loosen filters" button
                 OutlinedButton(
                   onClick = onLoosenFilters,
                   shape = RoundedCornerShape(14.dp),
-                  modifier = Modifier
-                    .weight(1f)
-                    .testTag("loosen_filters_button")
+                  modifier = Modifier.weight(1f).testTag("loosen_filters_button")
                 ) {
-                  Text(
-                    text = appStrings.loosenFiltersBtn,
-                    fontSize = 12.sp,
-                    color = PrimaryViolet,
-                    maxLines = 1
-                  )
+                  Text(appStrings.loosenFiltersBtn, fontSize = 12.sp, color = PrimaryViolet, maxLines = 1)
                 }
               }
             }
@@ -490,47 +481,30 @@ fun ResultsScreen(
                 Column(modifier = Modifier.weight(1f)) {
                   Text("Trend Report (Gemini)", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                   Text(
-                    if (trendSelectionMode) {
-                      "Select 5-20 outliers • selected: ${selectedTrendIds.size}"
-                    } else {
-                      "5-20 outliers select karke common patterns + 5 ideas pao"
-                    },
+                    if (trendSelectionMode) "Select 5-20 outliers • selected: ${selectedTrendIds.size}"
+                    else "5-20 outliers select karke common patterns + 5 ideas pao",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                   )
                 }
                 if (!trendSelectionMode) {
-                  OutlinedButton(onClick = {
-                    trendSelectionMode = true
-                    selectedTrendIds = emptySet()
-                  }) {
+                  OutlinedButton(onClick = { trendSelectionMode = true; selectedTrendIds = emptySet() }) {
                     Icon(Icons.Default.AutoFixHigh, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Select")
                   }
                 } else {
-                  OutlinedButton(onClick = {
-                    trendSelectionMode = false
-                    selectedTrendIds = emptySet()
-                  }) {
-                    Text("Cancel")
-                  }
+                  OutlinedButton(onClick = { trendSelectionMode = false; selectedTrendIds = emptySet() }) { Text("Cancel") }
                 }
               }
-
               if (trendSelectionMode) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                   Button(
                     onClick = {
                       val selected = displayList.filter { selectedTrendIds.contains(it.videoId) }
-                      if (selected.size in 5..20) {
-                        onGenerateTrendReport(selected)
-                      } else {
-                        coroutineScope.launch {
-                          snackbarHostState.showSnackbar("Trend report ke liye 5 se 20 outliers select karo")
-                        }
-                      }
+                      if (selected.size in 5..20) onGenerateTrendReport(selected)
+                      else coroutineScope.launch { snackbarHostState.showSnackbar("Trend report ke liye 5 se 20 outliers select karo") }
                     },
                     enabled = selectedTrendIds.size in 5..20 && trendReportUiState !is TrendReportUiState.Loading,
                     colors = ButtonDefaults.buttonColors(containerColor = PrimaryViolet)
@@ -539,11 +513,7 @@ fun ResultsScreen(
                     Spacer(Modifier.width(6.dp))
                     Text("Generate Trend Report", color = Color.White)
                   }
-                  OutlinedButton(onClick = {
-                    selectedTrendIds = displayList.take(20).map { it.videoId }.toSet()
-                  }) {
-                    Text("Pick 20")
-                  }
+                  OutlinedButton(onClick = { selectedTrendIds = displayList.take(20).map { it.videoId }.toSet() }) { Text("Pick 20") }
                 }
               }
             }
@@ -551,24 +521,16 @@ fun ResultsScreen(
         }
       }
 
-      // List of Outlier Cards with animated placement
-      items(
-        items = displayList,
-        key = { it.videoId }
-      ) { video ->
+      items(items = displayList, key = { it.videoId }) { video ->
         val isSelected = selectedTrendIds.contains(video.videoId)
+        val velocityLabel = velocityLabels[video.videoId]
         if (trendSelectionMode) {
           Row(
             modifier = Modifier
               .fillMaxWidth()
               .clickable {
-                selectedTrendIds = if (isSelected) {
-                  selectedTrendIds - video.videoId
-                } else if (selectedTrendIds.size < 20) {
-                  selectedTrendIds + video.videoId
-                } else {
-                  selectedTrendIds
-                }
+                selectedTrendIds = if (isSelected) selectedTrendIds - video.videoId
+                else if (selectedTrendIds.size < 20) selectedTrendIds + video.videoId else selectedTrendIds
                 if (!isSelected && selectedTrendIds.size >= 20) {
                   coroutineScope.launch { snackbarHostState.showSnackbar("Max 20 outliers select kar sakte ho") }
                 }
@@ -580,9 +542,7 @@ fun ResultsScreen(
               onCheckedChange = { checked ->
                 selectedTrendIds = if (checked) {
                   if (selectedTrendIds.size < 20) selectedTrendIds + video.videoId else selectedTrendIds
-                } else {
-                  selectedTrendIds - video.videoId
-                }
+                } else selectedTrendIds - video.videoId
               },
               modifier = Modifier.padding(top = 8.dp)
             )
@@ -593,7 +553,9 @@ fun ResultsScreen(
               onCopyClick = { label, content -> copyToClipboard(label, content) },
               onAiClick = onAiClick,
               onFindSimilar = onFindSimilar,
-              onCardClick = { /* selection mode: toggle handled by row */ },
+              onCardClick = { },
+              velocityLabel = velocityLabel,
+              onVerifyVisible = onVerifyShort,
               modifier = Modifier.weight(1f).animateItem()
             )
           }
@@ -606,12 +568,13 @@ fun ResultsScreen(
             onAiClick = onAiClick,
             onFindSimilar = onFindSimilar,
             onCardClick = onCardClick,
+            velocityLabel = velocityLabel,
+            onVerifyVisible = onVerifyShort,
             modifier = Modifier.animateItem()
           )
         }
       }
 
-      // Near misses section when final results < 5 (Requirement 5)
       if (!isLoading && displayList.size < 5 && nearMisses.isNotEmpty()) {
         item {
           NearMissesSection(
@@ -620,47 +583,25 @@ fun ResultsScreen(
             onOpenShort = { openShort(it) },
             onSaveNearMiss = { item ->
               val asOutlier = OutlierVideo(
-                videoId = item.videoId,
-                title = item.title,
-                description = "",
-                tags = emptyList(),
-                thumbnailUrl = item.thumbnailUrl,
-                channelId = item.channelId,
-                channelTitle = item.channelTitle,
-                subscriberCount = item.subscriberCount,
-                hiddenSubscriberCount = item.hiddenSubscriberCount,
-                views = item.views,
-                channelMedianViews = item.medianViews ?: 1_000L,
+                videoId = item.videoId, title = item.title, description = "", tags = emptyList(),
+                thumbnailUrl = item.thumbnailUrl, channelId = item.channelId, channelTitle = item.channelTitle,
+                subscriberCount = item.subscriberCount, hiddenSubscriberCount = item.hiddenSubscriberCount,
+                views = item.views, channelMedianViews = item.medianViews ?: 1_000L,
                 outlierMultiplier = item.multiplier ?: OutlierCalculator.calculateMultiplier(item.views, maxOf(1L, item.subscriberCount)),
                 viewsPerSub = OutlierCalculator.calculateViewsPerSub(item.views, item.subscriberCount),
-                likes = 0L,
-                comments = 0L,
-                durationSeconds = 60L,
-                publishedAt = "",
-                shortStatus = ShortStatus.UNVERIFIED
+                likes = 0L, comments = 0L, durationSeconds = 60L, publishedAt = "", shortStatus = ShortStatus.UNVERIFIED
               )
               onSaveToggle(asOutlier)
             },
             onAiNearMiss = { item ->
               val asOutlier = OutlierVideo(
-                videoId = item.videoId,
-                title = item.title,
-                description = "",
-                tags = emptyList(),
-                thumbnailUrl = item.thumbnailUrl,
-                channelId = item.channelId,
-                channelTitle = item.channelTitle,
-                subscriberCount = item.subscriberCount,
-                hiddenSubscriberCount = item.hiddenSubscriberCount,
-                views = item.views,
-                channelMedianViews = item.medianViews ?: 1_000L,
+                videoId = item.videoId, title = item.title, description = "", tags = emptyList(),
+                thumbnailUrl = item.thumbnailUrl, channelId = item.channelId, channelTitle = item.channelTitle,
+                subscriberCount = item.subscriberCount, hiddenSubscriberCount = item.hiddenSubscriberCount,
+                views = item.views, channelMedianViews = item.medianViews ?: 1_000L,
                 outlierMultiplier = item.multiplier ?: OutlierCalculator.calculateMultiplier(item.views, maxOf(1L, item.subscriberCount)),
                 viewsPerSub = OutlierCalculator.calculateViewsPerSub(item.views, item.subscriberCount),
-                likes = 0L,
-                comments = 0L,
-                durationSeconds = 60L,
-                publishedAt = "",
-                shortStatus = ShortStatus.UNVERIFIED
+                likes = 0L, comments = 0L, durationSeconds = 60L, publishedAt = "", shortStatus = ShortStatus.UNVERIFIED
               )
               onAiClick(asOutlier)
             }
@@ -668,7 +609,6 @@ fun ResultsScreen(
         }
       }
 
-      // Action Buttons: Load More & Try More
       if (!isLoading && displayList.isNotEmpty()) {
         item {
           Row(
@@ -683,116 +623,68 @@ fun ResultsScreen(
                 colors = ButtonDefaults.buttonColors(containerColor = PrimaryViolet),
                 modifier = Modifier.weight(1f).testTag("load_more_button")
               ) {
-                Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                  if (quotaStatus.hasUsableKey) "Load more" else "Quota khatam",
-                  fontSize = 14.sp,
-                  color = Color.White
-                )
+                Text(if (quotaStatus.hasUsableKey) "Load more" else "Quota khatam", fontSize = 14.sp, color = Color.White)
               }
             }
-
             OutlinedButton(
               onClick = { showTryMoreDialog = true },
               shape = RoundedCornerShape(14.dp),
               modifier = Modifier.weight(1f).testTag("try_more_button")
-            ) {
-              Text("Try more 🎯", fontSize = 14.sp, color = SecondaryCyan)
-            }
+            ) { Text("Try more 🎯", fontSize = 14.sp, color = SecondaryCyan) }
           }
         }
       }
 
-      // Expandable Debug Card (Auto-expands when finalOutliers == 0)
       if (!isLoading && (debugStats.searchReturned > 0 || debugStats.pages > 0 || displayList.isEmpty())) {
         item {
-          DebugCard(
-            debugStats = debugStats,
-            defaultExpanded = displayList.isEmpty() || debugStats.finalOutliers == 0
-          )
+          DebugCard(debugStats = debugStats, defaultExpanded = displayList.isEmpty() || debugStats.finalOutliers == 0)
           Spacer(modifier = Modifier.height(20.dp))
         }
       }
     }
 
-    // Snackbar Host for copy confirmations
-    SnackbarHost(
-      hostState = snackbarHostState,
-      modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp)
-    )
+    SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp))
 
     if (trendReportUiState !is TrendReportUiState.Idle) {
       val selectedVideosForReport = displayList.filter { selectedTrendIds.contains(it.videoId) }
       TrendReportSheet(
         uiState = trendReportUiState,
         selectedCount = selectedVideosForReport.size,
-        onRegenerate = {
-          if (selectedVideosForReport.size in 5..20) {
-            onGenerateTrendReport(selectedVideosForReport)
-          }
-        },
-        onDismiss = {
-          onResetTrendReport()
-          trendSelectionMode = false
-        }
+        onRegenerate = { if (selectedVideosForReport.size in 5..20) onGenerateTrendReport(selectedVideosForReport) },
+        onDismiss = { onResetTrendReport(); trendSelectionMode = false }
       )
     }
 
-    // "Try more" Confirmation & Options Dialog
     if (showTryMoreDialog) {
       val currentYear = Year.now().value
       AlertDialog(
         onDismissRequest = { showTryMoreDialog = false },
-        title = {
-          Text("Try More Angles", fontWeight = FontWeight.Bold)
-        },
+        title = { Text("Try More Angles", fontWeight = FontWeight.Bold) },
         text = {
           Column {
-            Text(
-              text = "Estimated cost: ~1-2 search calls + ~4-10 units. Channel cache will be reused to save quota.",
-              fontSize = 13.sp,
-              color = BadgeYellow
-            )
+            Text("Estimated cost: ~1-2 search calls + ~4-10 units. Channel cache will be reused to save quota.", fontSize = 13.sp, color = BadgeYellow)
             Spacer(modifier = Modifier.height(14.dp))
             Text("Keyword Variants:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
             Spacer(modifier = Modifier.height(6.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
               listOf("$trimmedKeyword shorts", "$trimmedKeyword viral", "$trimmedKeyword $currentYear").forEach { variant ->
-                ElevatedFilterChip(
-                  selected = false,
-                  onClick = {
-                    showTryMoreDialog = false
-                    onTryMore(variant)
-                  },
-                  label = { Text(variant, fontSize = 11.sp) }
-                )
+                ElevatedFilterChip(selected = false, onClick = { showTryMoreDialog = false; onTryMore(variant) }, label = { Text(variant, fontSize = 11.sp) })
               }
             }
-
             Spacer(modifier = Modifier.height(14.dp))
             Text("Time Slices:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
             Spacer(modifier = Modifier.height(6.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
               listOf("Last 7d" to "7d", "8–30d ago" to "30d", "31–90d ago" to "90d", "91–180d ago" to "6mo").forEach { (label, slice) ->
-                ElevatedFilterChip(
-                  selected = false,
-                  onClick = {
-                    showTryMoreDialog = false
-                    onTryMore(slice)
-                  },
-                  label = { Text(label, fontSize = 11.sp) }
-                )
+                ElevatedFilterChip(selected = false, onClick = { showTryMoreDialog = false; onTryMore(slice) }, label = { Text(label, fontSize = 11.sp) })
               }
             }
           }
         },
         confirmButton = {},
-        dismissButton = {
-          TextButton(onClick = { showTryMoreDialog = false }) {
-            Text("Cancel")
-          }
-        }
+        dismissButton = { TextButton(onClick = { showTryMoreDialog = false }) { Text("Cancel") } }
       )
     }
   }
@@ -807,45 +699,23 @@ private fun NearMissesSection(
   onAiNearMiss: (NearMissVideo) -> Unit
 ) {
   var isExpanded by remember(defaultExpanded) { mutableStateOf(defaultExpanded) }
-
   Card(
     shape = RoundedCornerShape(18.dp),
     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    modifier = Modifier
-      .fillMaxWidth()
-      .testTag("near_misses_card")
+    modifier = Modifier.fillMaxWidth().testTag("near_misses_card")
   ) {
     Column(modifier = Modifier.padding(14.dp)) {
       Row(
-        modifier = Modifier
-          .fillMaxWidth()
-          .clickable { isExpanded = !isExpanded }
-          .testTag("near_misses_header"),
+        modifier = Modifier.fillMaxWidth().clickable { isExpanded = !isExpanded }.testTag("near_misses_header"),
         verticalAlignment = Alignment.CenterVertically
       ) {
-        Text(
-          text = "Near misses (filters se bahar) (${nearMisses.size})",
-          fontSize = 14.sp,
-          fontWeight = FontWeight.Bold,
-          color = MaterialTheme.colorScheme.onSurface
-        )
+        Text("Near misses (filters se bahar) (${nearMisses.size})", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
         Spacer(modifier = Modifier.weight(1f))
-        Icon(
-          imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-          contentDescription = if (isExpanded) "Collapse" else "Expand",
-          tint = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Icon(if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = if (isExpanded) "Collapse" else "Expand", tint = MaterialTheme.colorScheme.onSurfaceVariant)
       }
-
       AnimatedVisibility(visible = isExpanded) {
-        Column(
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 10.dp),
-          verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
           Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
           nearMisses.forEach { item ->
             Row(
               modifier = Modifier
@@ -860,95 +730,32 @@ private fun NearMissesSection(
             ) {
               if (item.thumbnailUrl.isNotBlank()) {
                 AsyncImage(
-                  model = item.thumbnailUrl,
-                  contentDescription = null,
-                  contentScale = ContentScale.Crop,
-                  modifier = Modifier
-                    .width(56.dp)
-                    .height(82.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                  model = item.thumbnailUrl, contentDescription = null, contentScale = ContentScale.Crop,
+                  modifier = Modifier.width(56.dp).height(82.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
                 )
               }
-
               Column(modifier = Modifier.weight(1f)) {
-                Text(
-                  text = item.title,
-                  fontSize = 13.sp,
-                  fontWeight = FontWeight.SemiBold,
-                  color = MaterialTheme.colorScheme.onSurface,
-                  maxLines = 2,
-                  overflow = TextOverflow.Ellipsis
-                )
+                Text(item.title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                  text = "${item.channelTitle} · ${OutlierCalculator.formatCompactNumber(item.views)} views · ${OutlierCalculator.formatSubscribers(item.subscriberCount, item.hiddenSubscriberCount)} subs",
-                  fontSize = 11.sp,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Text("${item.channelTitle} · ${OutlierCalculator.formatCompactNumber(item.views)} views · ${OutlierCalculator.formatSubscribers(item.subscriberCount, item.hiddenSubscriberCount)} subs", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                  horizontalArrangement = Arrangement.spacedBy(6.dp),
-                  verticalAlignment = Alignment.CenterVertically
-                ) {
-                  // Red reason chip
-                  Box(
-                    modifier = Modifier
-                      .clip(RoundedCornerShape(6.dp))
-                      .background(AccentRed.copy(alpha = 0.18f))
-                      .padding(horizontal = 8.dp, vertical = 3.dp)
-                  ) {
-                    Text(
-                      text = item.reasonChip,
-                      fontSize = 11.sp,
-                      fontWeight = FontWeight.SemiBold,
-                      color = AccentRed
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                  Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(AccentRed.copy(alpha = 0.18f)).padding(horizontal = 8.dp, vertical = 3.dp)) {
+                    Text(item.reasonChip, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = AccentRed)
                   }
-
                   if (item.multiplier != null && item.multiplier > 0.0) {
-                    Box(
-                      modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(BadgeYellow.copy(alpha = 0.16f))
-                        .padding(horizontal = 6.dp, vertical = 3.dp)
-                    ) {
-                      Text(
-                        text = "${OutlierCalculator.formatMultiplier(item.multiplier)}x",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = BadgeYellow
-                      )
+                    Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(BadgeYellow.copy(alpha = 0.16f)).padding(horizontal = 6.dp, vertical = 3.dp)) {
+                      Text("${OutlierCalculator.formatMultiplier(item.multiplier)}x", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = BadgeYellow)
                     }
                   }
                 }
               }
-
-              Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-              ) {
-                IconButton(
-                  onClick = { onAiNearMiss(item) },
-                  modifier = Modifier.size(34.dp)
-                ) {
-                  Icon(
-                    imageVector = Icons.Default.AutoAwesome,
-                    contentDescription = "AI Breakdown",
-                    tint = PrimaryViolet,
-                    modifier = Modifier.size(18.dp)
-                  )
+              Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                IconButton(onClick = { onAiNearMiss(item) }, modifier = Modifier.size(34.dp)) {
+                  Icon(Icons.Default.AutoAwesome, contentDescription = "AI Breakdown", tint = PrimaryViolet, modifier = Modifier.size(18.dp))
                 }
-                IconButton(
-                  onClick = { onSaveNearMiss(item) },
-                  modifier = Modifier.size(34.dp)
-                ) {
-                  Icon(
-                    imageVector = Icons.Default.BookmarkBorder,
-                    contentDescription = "Save Near Miss",
-                    tint = SecondaryCyan,
-                    modifier = Modifier.size(18.dp)
-                  )
+                IconButton(onClick = { onSaveNearMiss(item) }, modifier = Modifier.size(34.dp)) {
+                  Icon(Icons.Default.BookmarkBorder, contentDescription = "Save Near Miss", tint = SecondaryCyan, modifier = Modifier.size(18.dp))
                 }
               }
             }
@@ -963,15 +770,10 @@ private fun NearMissesSection(
 private fun ShimmerOutlierCardPlaceholder() {
   val transition = rememberInfiniteTransition(label = "shimmer")
   val translateAnim by transition.animateFloat(
-    initialValue = 0f,
-    targetValue = 1000f,
-    animationSpec = infiniteRepeatable(
-      animation = tween(durationMillis = 1100, easing = LinearEasing),
-      repeatMode = RepeatMode.Restart
-    ),
+    initialValue = 0f, targetValue = 1000f,
+    animationSpec = infiniteRepeatable(animation = tween(durationMillis = 1100, easing = LinearEasing), repeatMode = RepeatMode.Restart),
     label = "shimmer_translate"
   )
-
   val shimmerBrush = Brush.linearGradient(
     colors = listOf(
       MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
@@ -981,57 +783,14 @@ private fun ShimmerOutlierCardPlaceholder() {
     start = Offset(translateAnim - 300f, translateAnim - 300f),
     end = Offset(translateAnim, translateAnim)
   )
-
-  Card(
-    shape = RoundedCornerShape(20.dp),
-    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    modifier = Modifier.fillMaxWidth()
-  ) {
-    Row(
-      modifier = Modifier
-        .fillMaxWidth()
-        .padding(14.dp),
-      horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-      Box(
-        modifier = Modifier
-          .width(105.dp)
-          .height(155.dp)
-          .clip(RoundedCornerShape(14.dp))
-          .background(shimmerBrush)
-      )
-      Column(
-        modifier = Modifier.weight(1f),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-      ) {
-        Box(
-          modifier = Modifier
-            .width(80.dp)
-            .height(22.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(shimmerBrush)
-        )
-        Box(
-          modifier = Modifier
-            .fillMaxWidth()
-            .height(18.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(shimmerBrush)
-        )
-        Box(
-          modifier = Modifier
-            .fillMaxWidth(0.75f)
-            .height(18.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(shimmerBrush)
-        )
-        Box(
-          modifier = Modifier
-            .fillMaxWidth(0.55f)
-            .height(14.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(shimmerBrush)
-        )
+  Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), modifier = Modifier.fillMaxWidth()) {
+    Row(modifier = Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+      Box(modifier = Modifier.width(105.dp).height(155.dp).clip(RoundedCornerShape(14.dp)).background(shimmerBrush))
+      Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Box(modifier = Modifier.width(80.dp).height(22.dp).clip(RoundedCornerShape(8.dp)).background(shimmerBrush))
+        Box(modifier = Modifier.fillMaxWidth().height(18.dp).clip(RoundedCornerShape(6.dp)).background(shimmerBrush))
+        Box(modifier = Modifier.fillMaxWidth(0.75f).height(18.dp).clip(RoundedCornerShape(6.dp)).background(shimmerBrush))
+        Box(modifier = Modifier.fillMaxWidth(0.55f).height(14.dp).clip(RoundedCornerShape(6.dp)).background(shimmerBrush))
       }
     }
   }

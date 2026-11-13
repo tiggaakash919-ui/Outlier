@@ -393,4 +393,28 @@ object OutlierCalculator {
     }
     return null
   }
+
+  /** Human-readable age like "2h ago", "3d ago", "2w ago". */
+  fun formatVideoAge(publishedAt: String, now: Instant = Instant.now()): String {
+    if (publishedAt.isBlank()) return "Unknown age"
+    return try {
+      val published = Instant.parse(publishedAt)
+      val minutes = max(0L, ChronoUnit.MINUTES.between(published, now))
+      when {
+        minutes < 60 -> "${max(1L, minutes)}m ago"
+        minutes < 60 * 24 -> "${minutes / 60}h ago"
+        minutes < 60 * 24 * 30 -> "${minutes / (60 * 24)}d ago"
+        minutes < 60 * 24 * 365 -> "${minutes / (60 * 24 * 7)}w ago"
+        else -> "${minutes / (60 * 24 * 365)}y ago"
+      }
+    } catch (_: Exception) {
+      if (publishedAt.length >= 10) publishedAt.substring(0, 10) else publishedAt
+    }
+  }
+
+  /** Simple fallback label when tracked velocity snapshots are unavailable. */
+  fun fallbackVelocityLabel(video: OutlierVideo): String {
+    val perDay = calculateViewsPerDay(video.views, video.publishedAt) ?: return "Velocity n/a"
+    return "⚡ $perDay"
+  }
 }

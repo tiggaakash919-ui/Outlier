@@ -13,6 +13,7 @@ import com.example.data.repository.KeyRepository
 import com.example.data.repository.OutlierRepository
 import com.example.data.repository.QuotaTracker
 import com.example.data.repository.SavedRepository
+import com.example.data.repository.SearchHistoryRepository
 import com.example.data.repository.VelocityRepository
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
@@ -114,5 +115,9 @@ class AppContainer(private val context: Context) {
 
   val velocityRepository: VelocityRepository by lazy {
     VelocityRepository(context, database)
+  }
+
+  val searchHistoryRepository: SearchHistoryRepository by lazy {
+    SearchHistoryRepository(database)
   }
 }

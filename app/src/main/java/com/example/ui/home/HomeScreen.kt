@@ -25,9 +25,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
@@ -71,11 +73,15 @@ import com.example.domain.OutlierCalculator
 import com.example.domain.PresetType
 import com.example.domain.Presets
 import com.example.domain.QuotaStatus
+import com.example.domain.SearchHistoryEntry
 import com.example.ui.components.QuotaBadge
 import com.example.ui.theme.AccentRed
 import com.example.ui.theme.LocalAppStrings
 import com.example.ui.theme.PrimaryViolet
 import com.example.ui.theme.SecondaryCyan
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -85,11 +91,15 @@ fun HomeScreen(
   isSearching: Boolean,
   progressMessage: String?,
   recentSearches: List<String>,
+  searchHistory: List<SearchHistoryEntry> = emptyList(),
   expandedKeywords: List<String> = emptyList(),
   isExpandingKeywords: Boolean = false,
+  themeMode: String = "DARK",
+  onThemeModeChange: (String) -> Unit = {},
   onExpandKeywords: () -> Unit = {},
   onFiltersChange: (FilterOptions) -> Unit,
   onSearchClick: () -> Unit,
+  onHistoryRerun: (SearchHistoryEntry) -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   val appStrings = LocalAppStrings.current
@@ -147,7 +157,18 @@ fun HomeScreen(
           color = SecondaryCyan
         )
       }
-      QuotaBadge(quotaStatus = quotaStatus)
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = {
+          onThemeModeChange(if (themeMode.equals("LIGHT", true)) "DARK" else "LIGHT")
+        }) {
+          Icon(
+            imageVector = if (themeMode.equals("LIGHT", true)) Icons.Default.DarkMode else Icons.Default.LightMode,
+            contentDescription = "Toggle theme",
+            tint = MaterialTheme.colorScheme.onBackground
+          )
+        }
+        QuotaBadge(quotaStatus = quotaStatus)
+      }
     }
 
     // Quota Exceeded Banner (Section 3)
@@ -914,8 +935,70 @@ fun HomeScreen(
       }
     }
 
-    // Recent Searches
-    if (recentSearches.isNotEmpty()) {
+    // Search history (last 20 searches with filters, one-tap re-run uses cache if fresh)
+    val historyItems = if (searchHistory.isNotEmpty()) searchHistory.take(20) else emptyList()
+    if (historyItems.isNotEmpty()) {
+      Spacer(modifier = Modifier.height(24.dp))
+      Text(
+        text = "${appStrings.recentSearches} (20, filters saved)",
+        fontSize = 13.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+      )
+      Spacer(modifier = Modifier.height(8.dp))
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        val df = remember { SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault()) }
+        historyItems.forEach { entry ->
+          val summary = buildString {
+            append(entry.mode.label)
+            append(" • ≥${OutlierCalculator.formatCompactNumber(entry.filters.minViralViews)} views")
+            append(" • ${entry.filters.minMultiplier}x")
+            append(" • ${entry.filters.recency}")
+          }
+          Card(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clickable(enabled = !isQuotaBlocked) { onHistoryRerun(entry) },
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+          ) {
+            Row(
+              modifier = Modifier.padding(12.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Icon(
+                imageVector = Icons.Default.History,
+                contentDescription = null,
+                tint = SecondaryCyan,
+                modifier = Modifier.size(18.dp)
+              )
+              Spacer(modifier = Modifier.width(10.dp))
+              Column(modifier = Modifier.weight(1f)) {
+                Text(
+                  text = entry.displayLabel,
+                  fontSize = 13.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = MaterialTheme.colorScheme.onSurface,
+                  maxLines = 1
+                )
+                Text(
+                  text = "$summary • ${df.format(Date(entry.timestamp))}",
+                  fontSize = 11.sp,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  maxLines = 2
+                )
+              }
+              Text(
+                text = "Re-run",
+                fontSize = 12.sp,
+                color = if (isQuotaBlocked) MaterialTheme.colorScheme.onSurfaceVariant else PrimaryViolet,
+                fontWeight = FontWeight.SemiBold
+              )
+            }
+          }
+        }
+      }
+    } else if (recentSearches.isNotEmpty()) {
       Spacer(modifier = Modifier.height(24.dp))
       Text(
         text = appStrings.recentSearches,
@@ -940,13 +1023,7 @@ fun HomeScreen(
               if (!isQuotaBlocked) onSearchClick()
             },
             label = { Text(query, fontSize = 12.sp) },
-            icon = {
-              Icon(
-                imageVector = Icons.Default.History,
-                contentDescription = null,
-                modifier = Modifier.size(14.dp)
-              )
-            }
+            icon = { Icon(imageVector = Icons.Default.History, contentDescription = null, modifier = Modifier.size(14.dp)) }
           )
         }
       }

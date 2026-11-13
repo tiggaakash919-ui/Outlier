@@ -32,7 +32,7 @@ class SavedRepository(
         videoId = entity.videoId,
         title = entity.title,
         description = entity.description,
-        tags = if (entity.tags.isBlank()) emptyList() else entity.tags.split(","),
+        tags = if (entity.tags.isBlank()) emptyList() else entity.tags.split(",").filter { it.isNotBlank() },
         thumbnailUrl = entity.thumbnailUrl,
         channelId = entity.channelId,
         channelTitle = entity.channelTitle,
@@ -52,7 +52,9 @@ class SavedRepository(
         shortStatus = parsedStatus,
         isSaved = true,
         savedAt = entity.savedAt,
-        isOneHitWonder = entity.isOneHitWonder
+        isOneHitWonder = entity.isOneHitWonder,
+        savedFolder = entity.folder.ifBlank { "Ideas to shoot" },
+        savedUserTags = if (entity.savedTags.isBlank()) emptyList() else entity.savedTags.split(",").map { it.trim() }.filter { it.isNotBlank() }
       )
     }
   }
@@ -64,6 +66,10 @@ class SavedRepository(
       savedDao.deleteSaved(video.videoId)
       false
     } else {
+      val existingOrg = savedDao.getOrganization(video.videoId)
+      val folder = existingOrg?.folder?.ifBlank { null } ?: video.savedFolder.ifBlank { "Ideas to shoot" }
+      val savedTags = existingOrg?.savedTags?.takeIf { it.isNotBlank() }
+        ?: video.savedUserTags.joinToString(",").ifBlank { "" }
       savedDao.saveOutlier(
         SavedOutlierEntity(
           videoId = video.videoId,
@@ -88,7 +94,9 @@ class SavedRepository(
           trimmedMeanViews = video.channelTrimmedMeanViews,
           p90Views = video.channelP90Views,
           highMultiplierShortCount = video.othersAbove10xCount,
-          isOneHitWonder = video.isOneHitWonder
+          isOneHitWonder = video.isOneHitWonder,
+          folder = folder,
+          savedTags = savedTags
         )
       )
       true
@@ -99,6 +107,15 @@ class SavedRepository(
       VelocityWorkScheduler.ensureScheduled(context)
     }
     return nowSaved
+  }
+
+  suspend fun updateFolder(videoId: String, folder: String) {
+    savedDao.updateFolder(videoId, folder.ifBlank { "Ideas to shoot" })
+  }
+
+  suspend fun updateSavedTags(videoId: String, tags: List<String>) {
+    val normalized = tags.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+    savedDao.updateSavedTags(videoId, normalized.joinToString(","))
   }
 
   suspend fun toggleWatchlist(video: OutlierVideo): Boolean {
@@ -150,14 +167,20 @@ class SavedRepository(
 
     /**
      * Generates UTF-8 CSV with 3-byte UTF-8 BOM (EF BB BF) so Excel renders Hindi/Hinglish text intact.
-     * Columns: Title, Channel, ChannelURL, Subs, Views, Median, Multiplier, ViewsPerSub,
-     * Likes, Comments, Duration, UploadDate, Tags, ShortStatus, VideoURL, SavedAt.
      */
-    fun generateCsvBytesWithBom(items: List<OutlierVideo>): ByteArray {
+    fun generateCsvBytesWithBom(items: List<OutlierVideo>, includeSavedColumns: Boolean = false): ByteArray {
       val sb = StringBuilder()
-      sb.append(
-        "Title,Channel,ChannelURL,Subs,Views,Median,Multiplier,ViewsPerSub,Likes,Comments,Duration,UploadDate,Tags,ShortStatus,VideoURL,SavedAt\r\n"
+      val header = mutableListOf(
+        "Title", "Channel", "ChannelURL", "Subs", "Views", "Median", "Multiplier",
+        "ViewsPerSub", "Likes", "Comments", "Duration", "UploadDate", "Tags",
+        "ShortStatus", "VideoURL"
       )
+      if (includeSavedColumns) {
+        header.addAll(listOf("Folder", "SavedTags", "SavedAt"))
+      } else {
+        header.add("PublishedAge")
+      }
+      sb.append(header.joinToString(",")).append("\r\n")
 
       for (item in items) {
         val channelUrl = "https://www.youtube.com/channel/${item.channelId}"
@@ -170,13 +193,7 @@ class SavedRepository(
           ShortStatus.NOT_A_SHORT -> "Not a Short"
           ShortStatus.UNVERIFIED -> "Unverified"
         }
-        val savedAtStr = if (item.savedAt > 0) {
-          dateFormatter.format(Instant.ofEpochMilli(item.savedAt))
-        } else {
-          dateFormatter.format(Instant.now())
-        }
-
-        val row = listOf(
+        val row = mutableListOf(
           escapeCsv(item.title),
           escapeCsv(item.channelTitle),
           escapeCsv(channelUrl),
@@ -191,16 +208,27 @@ class SavedRepository(
           escapeCsv(uploadDate),
           escapeCsv(tagsJoined),
           escapeCsv(shortStatusStr),
-          escapeCsv(videoUrl),
-          escapeCsv(savedAtStr)
-        ).joinToString(",")
-
-        sb.append(row).append("\r\n")
+          escapeCsv(videoUrl)
+        )
+        if (includeSavedColumns) {
+          val savedAtStr = if (item.savedAt > 0) {
+            dateFormatter.format(Instant.ofEpochMilli(item.savedAt))
+          } else ""
+          row.add(escapeCsv(item.savedFolder.ifBlank { "Ideas to shoot" }))
+          row.add(escapeCsv(item.savedUserTags.joinToString("; ")))
+          row.add(escapeCsv(savedAtStr))
+        } else {
+          row.add(escapeCsv(OutlierCalculator.formatVideoAge(item.publishedAt)))
+        }
+        sb.append(row.joinToString(",")).append("\r\n")
       }
 
       val csvBytes = sb.toString().toByteArray(Charsets.UTF_8)
       val bom = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())
       return bom + csvBytes
     }
+
+    fun generateSavedCsvBytesWithBom(items: List<OutlierVideo>): ByteArray =
+      generateCsvBytesWithBom(items, includeSavedColumns = true)
   }
 }

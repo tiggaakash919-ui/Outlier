@@ -182,13 +182,48 @@ interface SavedOutlierDao {
   @Query("SELECT EXISTS(SELECT 1 FROM saved_outliers WHERE videoId = :videoId)")
   suspend fun isSaved(videoId: String): Boolean
 
+  @Query("SELECT folder, savedTags FROM saved_outliers WHERE videoId = :videoId")
+  suspend fun getOrganization(videoId: String): SavedOrganizationRow?
+
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun saveOutlier(entity: SavedOutlierEntity)
+
+  @Query("UPDATE saved_outliers SET folder = :folder WHERE videoId = :videoId")
+  suspend fun updateFolder(videoId: String, folder: String)
+
+  @Query("UPDATE saved_outliers SET savedTags = :savedTags WHERE videoId = :videoId")
+  suspend fun updateSavedTags(videoId: String, savedTags: String)
 
   @Query("DELETE FROM saved_outliers WHERE videoId = :videoId")
   suspend fun deleteSaved(videoId: String)
 
   @Query("DELETE FROM saved_outliers")
+  suspend fun clearAll()
+}
+
+data class SavedOrganizationRow(
+  val folder: String,
+  val savedTags: String
+)
+
+@Dao
+interface SearchHistoryDao {
+  @Query("SELECT * FROM search_history ORDER BY timestamp DESC LIMIT :limit")
+  fun getRecentFlow(limit: Int = 20): Flow<List<SearchHistoryEntity>>
+
+  @Query("SELECT * FROM search_history ORDER BY timestamp DESC LIMIT :limit")
+  suspend fun getRecent(limit: Int = 20): List<SearchHistoryEntity>
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun insert(entity: SearchHistoryEntity)
+
+  @Query("DELETE FROM search_history WHERE dedupeKey = :dedupeKey")
+  suspend fun deleteByDedupeKey(dedupeKey: String)
+
+  @Query("DELETE FROM search_history WHERE id NOT IN (SELECT id FROM search_history ORDER BY timestamp DESC LIMIT :keep)")
+  suspend fun pruneTo(keep: Int = 20)
+
+  @Query("DELETE FROM search_history")
   suspend fun clearAll()
 }
 
