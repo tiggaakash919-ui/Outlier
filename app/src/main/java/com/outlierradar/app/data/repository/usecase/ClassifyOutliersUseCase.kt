@@ -91,33 +91,38 @@ class ClassifyOutliersUseCase(
         othersAbove5xCount = validBaseline.othersAbove5xCount
       )
 
+      val outlier = OutlierVideo(
+        videoId = v.videoId,
+        title = v.title,
+        description = v.description,
+        tags = v.tags,
+        thumbnailUrl = v.thumbnailUrl,
+        channelId = v.channelId,
+        channelTitle = v.channelTitle,
+        subscriberCount = subs,
+        hiddenSubscriberCount = hiddenSubs,
+        views = v.views,
+        channelMedianViews = validMedian,
+        channelTrimmedMeanViews = validBaseline.trimmedMean,
+        channelP90Views = validBaseline.p90,
+        outlierMultiplier = validMultiplier,
+        viewsPerSub = viewsPerSub,
+        viewsPerHour = OutlierCalculator.calculateViewsPerHour(v.views, v.publishedAt),
+        likes = v.likes,
+        comments = v.comments,
+        durationSeconds = v.durationSeconds,
+        publishedAt = v.publishedAt,
+        othersAbove5xCount = validBaseline.othersAbove5xCount,
+        othersAbove10xCount = validBaseline.othersAbove10xCount,
+        shortStatus = ShortStatus.UNVERIFIED,
+        isSaved = isSaved,
+        isOneHitWonder = oneHitWonder,
+        matchedKeyword = v.matchedKeyword
+      )
       finalCandidates.add(
-        OutlierVideo(
-          videoId = v.videoId,
-          title = v.title,
-          description = v.description,
-          tags = v.tags,
-          thumbnailUrl = v.thumbnailUrl,
-          channelId = v.channelId,
-          channelTitle = v.channelTitle,
-          subscriberCount = subs,
-          hiddenSubscriberCount = hiddenSubs,
-          views = v.views,
-          channelMedianViews = validMedian,
-          channelTrimmedMeanViews = validBaseline.trimmedMean,
-          channelP90Views = validBaseline.p90,
-          outlierMultiplier = validMultiplier,
-          viewsPerSub = viewsPerSub,
-          viewsPerHour = OutlierCalculator.calculateViewsPerHour(v.views, v.publishedAt),
-          likes = v.likes,
-          comments = v.comments,
-          durationSeconds = v.durationSeconds,
-          publishedAt = v.publishedAt,
-          othersAbove5xCount = validBaseline.othersAbove5xCount,
-          othersAbove10xCount = validBaseline.othersAbove10xCount,
-          shortStatus = ShortStatus.UNVERIFIED,
-          isSaved = isSaved,
-          isOneHitWonder = oneHitWonder
+        outlier.copy(
+          rpmEstimate = OutlierCalculator.estimateRpm(outlier),
+          facelessPotential = OutlierCalculator.facelessPotential(outlier)
         )
       )
     }

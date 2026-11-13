@@ -321,6 +321,24 @@ fun OutlierCard(
           }
         }
 
+        if (video.rpmEstimate > 0) {
+          SuggestionChip(
+            onClick = {},
+            label = { Text(String.format(Locale.US, "$%.1f RPM", video.rpmEstimate), fontSize = 11.sp, color = BadgeYellow) },
+            colors = SuggestionChipDefaults.suggestionChipColors(containerColor = BadgeYellow.copy(alpha = 0.12f)),
+            border = null
+          )
+        }
+
+        if (video.facelessPotential) {
+          SuggestionChip(
+            onClick = {},
+            label = { Text("🎭 Faceless-friendly", fontSize = 11.sp, color = SecondaryCyan) },
+            colors = SuggestionChipDefaults.suggestionChipColors(containerColor = SecondaryCyan.copy(alpha = 0.12f)),
+            border = null
+          )
+        }
+
         if (video.viewsPerSub > 0) {
           SuggestionChip(
             onClick = {},

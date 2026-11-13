@@ -429,4 +429,22 @@ object OutlierCalculator {
     val perDay = calculateViewsPerDay(video.views, video.publishedAt) ?: return "Velocity n/a"
     return "⚡ $perDay"
   }
+
+  /** Rough RPM estimate (USD per 1k views) heuristic based on niche keyword vibes. */
+  fun estimateRpm(video: OutlierVideo): Double {
+    val base = 1.5
+    val nicheBoost = if (video.matchedKeyword.contains("finance", true) || video.matchedKeyword.contains("tech", true)) 2.0 else 1.0
+    val engagement = if (video.likes > 0 && video.views > 0) (video.likes.toDouble() / video.views.toDouble()) * 100.0 else 0.0
+    return (base * nicheBoost * (1.0 + engagement / 100.0)).coerceIn(0.5, 12.0)
+  }
+
+  /** Heuristic: faceless-friendly if no face mentions and tags suggest voiceover/animation. */
+  fun facelessPotential(video: OutlierVideo): Boolean {
+    val t = (video.title + " " + video.tags.joinToString(" ")).lowercase()
+    val facelessHints = listOf("voiceover", "animation", "text", "facts", "story", "ai", "compilation", "top 10", "list")
+    val faceHints = listOf("vlog", "reaction", "face", "selfie", "talking")
+    val hasFaceless = facelessHints.any { t.contains(it) }
+    val hasFace = faceHints.any { t.contains(it) }
+    return hasFaceless && !hasFace
+  }
 }

@@ -45,6 +45,10 @@ class SavedRepository(
         outlierMultiplier = entity.multiplier,
         viewsPerSub = entity.viewsPerSub,
         viewsPerHour = OutlierCalculator.calculateViewsPerHour(entity.views, entity.publishedAt),
+        rpmEstimate = OutlierCalculator.estimateRpm(
+          OutlierVideo(videoId = entity.videoId, title = entity.title, description = entity.description, tags = if (entity.tags.isBlank()) emptyList() else entity.tags.split(","), thumbnailUrl = entity.thumbnailUrl, channelId = entity.channelId, channelTitle = entity.channelTitle, subscriberCount = entity.subscriberCount, hiddenSubscriberCount = false, views = entity.views, channelMedianViews = entity.medianViews, outlierMultiplier = entity.multiplier, viewsPerSub = entity.viewsPerSub, likes = entity.likes, comments = entity.comments, durationSeconds = entity.durationSeconds, publishedAt = entity.publishedAt)
+        ),
+        facelessPotential = false,
         likes = entity.likes,
         comments = entity.comments,
         durationSeconds = entity.durationSeconds,
