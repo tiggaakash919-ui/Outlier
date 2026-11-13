@@ -3,6 +3,7 @@ package com.outlierradar.app.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.outlierradar.app.BuildConfig
 import com.outlierradar.app.data.local.AppDatabase
 import com.outlierradar.app.data.local.SettingsStore
 import com.outlierradar.app.data.repository.AiRepository
@@ -103,6 +104,24 @@ class MainViewModel(
 
   val geminiModel: StateFlow<String> = settingsStore.geminiModel
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "gemini-3.8-flash")
+
+  val aiProvider: StateFlow<String> = settingsStore.aiProvider
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "COARENA")
+
+  val coarenaModel: StateFlow<String> = settingsStore.coarenaModel
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "gemini-3-8-flash")
+
+  /** Masked effective Coarena key (Settings override first, then BuildConfig). */
+  val coarenaKeyMasked: StateFlow<String?> = settingsStore.coarenaApiKey
+    .map { stored ->
+      val effective = stored.trim().ifBlank { BuildConfig.COARENA_API_KEY.trim() }
+      when {
+        effective.isBlank() -> null
+        effective.length <= 12 -> "••••••"
+        else -> effective.take(7) + "…" + effective.takeLast(4)
+      }
+    }
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
   val aiLanguage: StateFlow<String> = settingsStore.aiLanguage
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "Hinglish")
@@ -699,6 +718,27 @@ class MainViewModel(
       settingsStore.setGeminiModel(model)
     }
   }
+
+  fun setAiProvider(provider: String) {
+    viewModelScope.launch {
+      settingsStore.setAiProvider(provider)
+    }
+  }
+
+  fun setCoarenaModel(model: String) {
+    viewModelScope.launch {
+      settingsStore.setCoarenaModel(model)
+    }
+  }
+
+  fun setCoarenaApiKey(key: String) {
+    viewModelScope.launch {
+      settingsStore.setCoarenaApiKey(key)
+    }
+  }
+
+  /** Runs a live Coarena /models check; null means success. */
+  suspend fun testCoarenaConnection(key: String?): String? = aiRepository.testCoarenaConnection(key)
 
   fun setAiLanguage(lang: String) {
     viewModelScope.launch {

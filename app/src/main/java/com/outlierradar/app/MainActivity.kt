@@ -231,6 +231,9 @@ fun MainAppContent(
   val apiKeys by viewModel.apiKeys.collectAsStateWithLifecycle()
   val costEstimate by viewModel.costEstimate.collectAsStateWithLifecycle()
   val geminiModel by viewModel.geminiModel.collectAsStateWithLifecycle()
+  val aiProvider by viewModel.aiProvider.collectAsStateWithLifecycle()
+  val coarenaModel by viewModel.coarenaModel.collectAsStateWithLifecycle()
+  val coarenaKeyMasked by viewModel.coarenaKeyMasked.collectAsStateWithLifecycle()
   val aiLanguage by viewModel.aiLanguage.collectAsStateWithLifecycle()
   val uiLanguage by viewModel.uiLanguage.collectAsStateWithLifecycle()
   val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
@@ -460,11 +463,18 @@ fun MainAppContent(
             apiKeys = apiKeys,
             quotaStatus = quotaStatus,
             geminiModel = geminiModel,
+            aiProvider = aiProvider,
+            coarenaModel = coarenaModel,
+            coarenaKeyMasked = coarenaKeyMasked,
             aiLanguage = aiLanguage,
             uiLanguage = uiLanguage,
             themeMode = themeMode,
             keyRepository = keyRepository,
             onModelChange = { viewModel.setGeminiModel(it) },
+            onAiProviderChange = { viewModel.setAiProvider(it) },
+            onCoarenaModelChange = { viewModel.setCoarenaModel(it) },
+            onCoarenaKeySave = { viewModel.setCoarenaApiKey(it) },
+            onTestCoarenaKey = { key -> viewModel.testCoarenaConnection(key) },
             onAiLanguageChange = { viewModel.setAiLanguage(it) },
             onUiLanguageChange = { viewModel.setUiLanguage(it) },
             onThemeModeChange = { viewModel.setThemeMode(it) },

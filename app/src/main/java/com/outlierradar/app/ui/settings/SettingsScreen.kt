@@ -74,11 +74,18 @@ fun SettingsScreen(
   apiKeys: List<ApiKeyUi> = emptyList(),
   quotaStatus: QuotaStatus,
   geminiModel: String,
+  aiProvider: String = "COARENA",
+  coarenaModel: String = "gemini-3-8-flash",
+  coarenaKeyMasked: String? = null,
   aiLanguage: String,
   uiLanguage: String,
   themeMode: String,
   keyRepository: KeyRepository,
   onModelChange: (String) -> Unit,
+  onAiProviderChange: (String) -> Unit = {},
+  onCoarenaModelChange: (String) -> Unit = {},
+  onCoarenaKeySave: (String) -> Unit = {},
+  onTestCoarenaKey: suspend (String?) -> String? = { null },
   onAiLanguageChange: (String) -> Unit,
   onUiLanguageChange: (String) -> Unit,
   onThemeModeChange: (String) -> Unit,
@@ -111,6 +118,18 @@ fun SettingsScreen(
       modelInput = geminiModel
     }
   }
+
+  var coarenaModelInput by remember { mutableStateOf(coarenaModel) }
+  LaunchedEffect(coarenaModel) {
+    if (coarenaModelInput != coarenaModel) {
+      coarenaModelInput = coarenaModel
+    }
+  }
+
+  var coarenaKeyInput by remember { mutableStateOf("") }
+  var isTestingCoarena by remember { mutableStateOf(false) }
+  var coarenaStatus by remember { mutableStateOf<String?>(null) }
+  val isCoarena = !aiProvider.equals("FIREBASE", ignoreCase = true)
 
   Column(
     modifier = modifier
@@ -367,7 +386,7 @@ fun SettingsScreen(
       }
     }
 
-    // SECTION 2: Gemini AI Configuration
+    // SECTION 2: AI Configuration
     Card(
       shape = RoundedCornerShape(18.dp),
       colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -375,24 +394,144 @@ fun SettingsScreen(
     ) {
       Column(modifier = Modifier.padding(16.dp)) {
         Text(
-          "Gemini AI Analysis (Firebase AI Logic)",
+          "AI Analysis",
           fontSize = 16.sp,
           fontWeight = FontWeight.Bold,
           color = MaterialTheme.colorScheme.onSurface
         )
+        Text(
+          if (isCoarena) "Coarena Model API (OpenAI-compatible, free)" else "Firebase AI Logic (Gemini)",
+          fontSize = 12.sp,
+          color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         Spacer(modifier = Modifier.height(10.dp))
 
-        OutlinedTextField(
-          value = modelInput,
-          onValueChange = {
-            modelInput = it
-            onModelChange(it)
-          },
-          label = { Text("Gemini Model Name") },
-          singleLine = true,
-          shape = RoundedCornerShape(12.dp),
-          modifier = Modifier.fillMaxWidth().testTag("gemini_model_input")
-        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          FilterChip(
+            selected = isCoarena,
+            onClick = { onAiProviderChange("COARENA") },
+            label = { Text("Coarena Free", fontSize = 12.sp) }
+          )
+          FilterChip(
+            selected = !isCoarena,
+            onClick = { onAiProviderChange("FIREBASE") },
+            label = { Text("Firebase Gemini", fontSize = 12.sp) }
+          )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        if (isCoarena) {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(12.dp))
+              .background(MaterialTheme.colorScheme.surfaceVariant)
+              .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+          ) {
+            Text(
+              text = coarenaKeyMasked ?: "No Coarena key saved",
+              fontFamily = FontFamily.Monospace,
+              fontSize = 13.sp,
+              color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+              text = if (coarenaKeyMasked != null) "✓ Ready" else "Setup needed",
+              fontSize = 12.sp,
+              color = if (coarenaKeyMasked != null) BadgeGreen else AccentRed,
+              fontWeight = FontWeight.Medium
+            )
+          }
+
+          Spacer(modifier = Modifier.height(10.dp))
+
+          OutlinedTextField(
+            value = coarenaKeyInput,
+            onValueChange = {
+              coarenaKeyInput = it
+              coarenaStatus = null
+            },
+            label = { Text("Coarena API Key (coa_...)") },
+            placeholder = { Text("Paste your key, then Save") },
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth().testTag("coarena_key_input")
+          )
+
+          Spacer(modifier = Modifier.height(8.dp))
+
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+              onClick = {
+                onCoarenaKeySave(coarenaKeyInput)
+                coarenaKeyInput = ""
+                coarenaStatus = "✓ Key save ho gayi"
+                Toast.makeText(context, "Coarena key saved (encrypted)", Toast.LENGTH_SHORT).show()
+              },
+              enabled = coarenaKeyInput.isNotBlank(),
+              colors = ButtonDefaults.buttonColors(containerColor = PrimaryViolet)
+            ) {
+              Text("Save Key", color = Color.White, fontSize = 12.sp)
+            }
+            OutlinedButton(
+              onClick = {
+                isTestingCoarena = true
+                coarenaStatus = null
+                coroutineScope.launch {
+                  val err = onTestCoarenaKey(coarenaKeyInput.takeIf { it.isNotBlank() })
+                  isTestingCoarena = false
+                  coarenaStatus = if (err == null) "✓ Coarena connected" else "✗ $err"
+                  Toast.makeText(context, coarenaStatus, Toast.LENGTH_LONG).show()
+                }
+              },
+              enabled = !isTestingCoarena
+            ) {
+              if (isTestingCoarena) {
+                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                Spacer(modifier = Modifier.width(6.dp))
+              }
+              Text("Test", fontSize = 12.sp)
+            }
+          }
+
+          coarenaStatus?.let {
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+              it,
+              fontSize = 12.sp,
+              color = if (it.startsWith("✓")) BadgeGreen else AccentRed
+            )
+          }
+
+          Spacer(modifier = Modifier.height(12.dp))
+
+          OutlinedTextField(
+            value = coarenaModelInput,
+            onValueChange = {
+              coarenaModelInput = it
+              onCoarenaModelChange(it)
+            },
+            label = { Text("Coarena Model ID") },
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth().testTag("coarena_model_input")
+          )
+        } else {
+          OutlinedTextField(
+            value = modelInput,
+            onValueChange = {
+              modelInput = it
+              onModelChange(it)
+            },
+            label = { Text("Gemini Model Name") },
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth().testTag("gemini_model_input")
+          )
+        }
 
         Spacer(modifier = Modifier.height(12.dp))
         Text("AI Response Language:", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)

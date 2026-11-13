@@ -20,6 +20,22 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    // Coarena Model API (OpenAI-compatible). The key is resolved in this order:
+    //   1. COARENA_API_KEY environment variable (CI secret / shell export)
+    //   2. coarenaApiKey Gradle property (-PcoarenaApiKey=...)
+    //   3. coarenaApiKey in local.properties (gitignored, used for local builds)
+    // It is never logged. Users can also override it at runtime from Settings.
+    val localProps = java.util.Properties().apply {
+      val f = rootProject.file("local.properties")
+      if (f.exists()) f.inputStream().use { load(it) }
+    }
+    val coarenaKey = System.getenv("COARENA_API_KEY")
+      ?: (project.findProperty("coarenaApiKey") as String?)
+      ?: localProps.getProperty("coarenaApiKey")
+      ?: ""
+    buildConfigField("String", "COARENA_API_KEY", "\"${coarenaKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+    buildConfigField("String", "COARENA_BASE_URL", "\"https://coarena.ai/api/v1/\"")
   }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,

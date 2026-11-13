@@ -32,6 +32,9 @@ class SettingsStore(
 ) {
   private val KEY_ENCRYPTED_API_KEY = stringPreferencesKey("encrypted_api_key") // legacy single key
   private val KEY_GEMINI_MODEL = stringPreferencesKey("gemini_model")
+  private val KEY_COARENA_MODEL = stringPreferencesKey("coarena_model")
+  private val KEY_COARENA_API_KEY = stringPreferencesKey("coarena_api_key_encrypted")
+  private val KEY_AI_PROVIDER = stringPreferencesKey("ai_provider")
   private val KEY_AI_LANGUAGE = stringPreferencesKey("ai_language")
   private val KEY_UI_LANGUAGE = stringPreferencesKey("ui_language")
   private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
@@ -63,6 +66,21 @@ class SettingsStore(
   val geminiModel: Flow<String> = context.dataStore.data.map { prefs ->
     val saved = prefs[KEY_GEMINI_MODEL]
     if (saved.isNullOrBlank() || saved == "gemini-2.5-flash") "gemini-3.8-flash" else saved
+  }
+
+  /** AI backend: COARENA (default) or FIREBASE. */
+  val aiProvider: Flow<String> = context.dataStore.data.map { prefs ->
+    prefs[KEY_AI_PROVIDER]?.takeIf { it.isNotBlank() } ?: "COARENA"
+  }
+
+  val coarenaModel: Flow<String> = context.dataStore.data.map { prefs ->
+    prefs[KEY_COARENA_MODEL]?.takeIf { it.isNotBlank() } ?: "gemini-3-8-flash"
+  }
+
+  /** Decrypted Coarena key stored from Settings; empty when not set. */
+  val coarenaApiKey: Flow<String> = context.dataStore.data.map { prefs ->
+    val cipher = prefs[KEY_COARENA_API_KEY]
+    if (cipher.isNullOrBlank()) "" else runCatching { keyVault.decrypt(cipher) }.getOrDefault("")
   }
 
   val aiLanguage: Flow<String> = context.dataStore.data.map { prefs ->
@@ -247,6 +265,36 @@ class SettingsStore(
     context.dataStore.edit { prefs ->
       prefs[KEY_GEMINI_MODEL] = model.trim()
     }
+  }
+
+  suspend fun setAiProvider(provider: String) {
+    context.dataStore.edit { prefs ->
+      prefs[KEY_AI_PROVIDER] = if (provider.trim().equals("FIREBASE", true)) "FIREBASE" else "COARENA"
+    }
+  }
+
+  suspend fun setCoarenaModel(model: String) {
+    context.dataStore.edit { prefs ->
+      prefs[KEY_COARENA_MODEL] = model.trim()
+    }
+  }
+
+  /** Stores the Coarena key encrypted at rest. Blank input removes it. */
+  suspend fun setCoarenaApiKey(rawKey: String) {
+    val trimmed = rawKey.trim()
+    context.dataStore.edit { prefs ->
+      if (trimmed.isBlank()) {
+        prefs.remove(KEY_COARENA_API_KEY)
+      } else {
+        prefs[KEY_COARENA_API_KEY] = keyVault.encrypt(trimmed)
+      }
+    }
+  }
+
+  suspend fun getCoarenaApiKeyNow(): String {
+    val cipher = context.dataStore.data.firstOrNull()?.get(KEY_COARENA_API_KEY)
+    if (cipher.isNullOrBlank()) return ""
+    return runCatching { keyVault.decrypt(cipher) }.getOrDefault("")
   }
 
   suspend fun setAiLanguage(lang: String) {

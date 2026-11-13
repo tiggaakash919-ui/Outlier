@@ -39,9 +39,13 @@ class AppContainer(private val context: Context) {
 
   private val okHttpClient: OkHttpClient by lazy {
     val keyRedactRegex = Regex("key=[^&\\s]+")
+    val bearerRedactRegex = Regex("(?i)bearer\\s+[A-Za-z0-9._\\-]+")
     val safeLogger = HttpLoggingInterceptor.Logger { message ->
       if (BuildConfig.DEBUG) {
-        val redacted = keyRedactRegex.replace(message, "key=REDACTED")
+        val redacted = bearerRedactRegex.replace(
+          keyRedactRegex.replace(message, "key=REDACTED"),
+          "Bearer [REDACTED]"
+        )
         Log.d("OutlierHttp", redacted)
       }
     }

@@ -6,6 +6,12 @@ enum class ShortStatus {
   UNVERIFIED
 }
 
+/** Which backend powers the AI features. */
+enum class AiProvider(val label: String, val hint: String) {
+  COARENA("Coarena Free", "OpenAI-compatible, free model API"),
+  FIREBASE("Firebase Gemini", "Firebase AI Logic (needs App Check)")
+}
+
 enum class SortOption(val label: String) {
   SCORE("Score"),
   MULTIPLIER("Multiplier"),

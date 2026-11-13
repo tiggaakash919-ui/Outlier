@@ -2,10 +2,14 @@ package com.outlierradar.app.data.repository
 
 import android.graphics.BitmapFactory
 import android.util.Log
+import com.outlierradar.app.BuildConfig
 import com.outlierradar.app.data.local.AiCacheEntity
 import com.outlierradar.app.data.local.AppDatabase
 import com.outlierradar.app.data.local.NicheCacheEntity
 import com.outlierradar.app.data.local.SettingsStore
+import com.outlierradar.app.data.remote.CoarenaClient
+import com.outlierradar.app.data.remote.CoarenaException
+import com.outlierradar.app.data.remote.CoarenaSchemas
 import com.outlierradar.app.domain.AiAnalysis
 import com.outlierradar.app.domain.CacheTtl
 import com.outlierradar.app.domain.DiscoveryHelpers
@@ -48,7 +52,9 @@ private const val MAX_THUMBNAIL_BYTES = 1_500_000L
 private const val RATE_LIMIT_MAX_RETRIES = 3
 private const val RATE_LIMIT_INITIAL_DELAY_MS = 1000L
 private const val RATE_LIMIT_HINGLISH =
-  "Gemini rate limit aa gaya (429). Thodi der baad dobara try karo."
+  "AI rate limit aa gaya (429). Thodi der baad dobara try karo."
+private const val COARENA_AUTH_HINGLISH =
+  "Coarena API key galat ya missing hai. Settings me Coarena key check karo."
 
 sealed interface AiResult {
   data class Success(val analysis: AiAnalysis, val isCached: Boolean) : AiResult
@@ -79,6 +85,7 @@ data class KeywordExpansion(
 class AiRepository(
   private val database: AppDatabase,
   private val settingsStore: SettingsStore,
+  private val coarenaClient: CoarenaClient = CoarenaClient(),
   private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
     .connectTimeout(10, TimeUnit.SECONDS)
     .readTimeout(10, TimeUnit.SECONDS)
@@ -400,10 +407,74 @@ class AiRepository(
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // AI provider routing (Coarena by default, Firebase Gemini as fallback)
+  // ---------------------------------------------------------------------------
+
+  private suspend fun currentProvider(): String =
+    settingsStore.aiProvider.firstOrNull()?.uppercase(Locale.ROOT) ?: "COARENA"
+
+  private suspend fun modelNameForProvider(provider: String): String = when (provider) {
+    "FIREBASE" -> settingsStore.geminiModel.firstOrNull()?.trim().orEmpty()
+      .ifEmpty { "gemini-3.8-flash" }
+    else -> settingsStore.coarenaModel.firstOrNull()?.trim().orEmpty()
+      .ifEmpty { CoarenaClient.DEFAULT_MODEL }
+  }
+
+  private suspend fun resolveCoarenaKey(): String {
+    val stored = settingsStore.getCoarenaApiKeyNow().trim()
+    if (stored.isNotBlank()) return stored
+    return BuildConfig.COARENA_API_KEY.trim()
+  }
+
+  private fun bitmapToPngBytes(bitmap: android.graphics.Bitmap): ByteArray {
+    val out = java.io.ByteArrayOutputStream()
+    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+    return out.toByteArray()
+  }
+
+  /** Raises a clear, Hinglish error before hitting the network when no key exists. */
+  private suspend fun requireCoarenaKey(): String {
+    val key = resolveCoarenaKey()
+    if (key.isBlank()) {
+      throw CoarenaException("Coarena API key missing. Settings me key add karo.")
+    }
+    return key
+  }
+
+  private suspend fun generateWithCoarena(
+    modelName: String,
+    prompt: String,
+    schema: JSONObject,
+    thumbnail: android.graphics.Bitmap? = null,
+    timeoutMs: Long = 90_000L
+  ): String {
+    val key = requireCoarenaKey()
+    return withRateLimitRetry {
+      withTimeout(timeoutMs) {
+        coarenaClient.generateJson(
+          apiKey = key,
+          model = modelName,
+          prompt = prompt,
+          schema = schema,
+          imagePng = thumbnail?.let { bitmapToPngBytes(it) }
+        )
+      }
+    }
+  }
+
+  private fun redactKey(message: String, key: String): String {
+    if (key.isBlank()) return message
+    return message.replace(key, "[REDACTED]")
+  }
+
   private fun mapAiException(e: Exception, modelName: String): String {
     return when {
       e is TimeoutCancellationException -> "AI analysis timed out. Dobara try karo."
-      isRateLimitError(e) -> RATE_LIMIT_HINGLISH
+      e is CoarenaException && (e.statusCode == 401 || e.statusCode == 403) -> COARENA_AUTH_HINGLISH
+      e is CoarenaException && (e.statusCode == 429 || e.statusCode == 503) -> RATE_LIMIT_HINGLISH
+      CoarenaClient.isAuthError(e) -> COARENA_AUTH_HINGLISH
+      CoarenaClient.isRateLimit(e) || isRateLimitError(e) -> RATE_LIMIT_HINGLISH
       else -> {
         val detail = e.localizedMessage ?: "Unknown error"
         "AI request fail ho gaya ($detail). Settings me model/connection check karo."
@@ -431,28 +502,33 @@ class AiRepository(
       }
     }
 
-    val modelName = settingsStore.geminiModel.firstOrNull()?.trim().orEmpty().ifEmpty { "gemini-3.8-flash" }
+    val provider = currentProvider()
+    val modelName = modelNameForProvider(provider)
     val prompt = buildPrompt(video, promptLanguage)
     val thumbnail = downloadThumbnailBitmap(video.thumbnailUrl)
 
     try {
-      val model = getModelForName(modelName)
-      val response = withRateLimitRetry {
-        withTimeout(60_000L) {
-          if (thumbnail != null) {
-            model.generateContent(
-              content {
-                image(thumbnail)
-                text(prompt)
-              }
-            )
-          } else {
-            model.generateContent(prompt)
+      val jsonString = if (provider == "FIREBASE") {
+        val model = getModelForName(modelName)
+        val response = withRateLimitRetry {
+          withTimeout(60_000L) {
+            if (thumbnail != null) {
+              model.generateContent(
+                content {
+                  image(thumbnail)
+                  text(prompt)
+                }
+              )
+            } else {
+              model.generateContent(prompt)
+            }
           }
         }
+        response.text
+      } else {
+        generateWithCoarena(modelName, prompt, CoarenaSchemas.analysis, thumbnail)
       }
 
-      val jsonString = response.text
       if (jsonString.isNullOrBlank()) {
         return@withContext AiResult.Error("AI se khaali response aaya. Model/settings check karo ($modelName).")
       }
@@ -498,27 +574,32 @@ class AiRepository(
       }
     }
 
-    val modelName = settingsStore.geminiModel.firstOrNull()?.trim().orEmpty().ifEmpty { "gemini-3.8-flash" }
+    val provider = currentProvider()
+    val modelName = modelNameForProvider(provider)
     val prompt = buildContentPackPrompt(video, promptLanguage)
     val thumbnail = downloadThumbnailBitmap(video.thumbnailUrl)
 
     try {
-      val model = getPackModel(modelName)
-      val response = withRateLimitRetry {
-        withTimeout(60_000L) {
-          if (thumbnail != null) {
-            model.generateContent(
-              content {
-                image(thumbnail)
-                text(prompt)
-              }
-            )
-          } else {
-            model.generateContent(prompt)
+      val jsonString = if (provider == "FIREBASE") {
+        val model = getPackModel(modelName)
+        val response = withRateLimitRetry {
+          withTimeout(90_000L) {
+            if (thumbnail != null) {
+              model.generateContent(
+                content {
+                  image(thumbnail)
+                  text(prompt)
+                }
+              )
+            } else {
+              model.generateContent(prompt)
+            }
           }
         }
+        response.text
+      } else {
+        generateWithCoarena(modelName, prompt, CoarenaSchemas.contentPack, thumbnail)
       }
-      val jsonString = response.text
       if (jsonString.isNullOrBlank()) {
         return@withContext ContentPackResult.Error("Content pack ka response khaali aaya. Dobara try karo.")
       }
@@ -565,15 +646,20 @@ class AiRepository(
       }
     }
 
-    val modelName = settingsStore.geminiModel.firstOrNull()?.trim().orEmpty().ifEmpty { "gemini-3.8-flash" }
+    val provider = currentProvider()
+    val modelName = modelNameForProvider(provider)
     val prompt = buildContentGapsPrompt(cleanKw, promptLanguage)
 
     try {
-      val model = getGapsModel(modelName)
-      val response = withRateLimitRetry {
-        withTimeout(60_000L) { model.generateContent(prompt) }
+      val jsonString = if (provider == "FIREBASE") {
+        val model = getGapsModel(modelName)
+        val response = withRateLimitRetry {
+          withTimeout(60_000L) { model.generateContent(prompt) }
+        }
+        response.text
+      } else {
+        generateWithCoarena(modelName, prompt, CoarenaSchemas.contentGaps)
       }
-      val jsonString = response.text
       if (jsonString.isNullOrBlank()) {
         return@withContext ContentGapsResult.Error("Content gaps ka response khaali aaya. Dobara try karo.")
       }
@@ -626,15 +712,20 @@ class AiRepository(
       }
     }
 
-    val modelName = settingsStore.geminiModel.firstOrNull()?.trim().orEmpty().ifEmpty { "gemini-3.8-flash" }
+    val provider = currentProvider()
+    val modelName = modelNameForProvider(provider)
     val prompt = buildTrendPrompt(selected, promptLanguage)
 
     try {
-      val model = getTrendModel(modelName)
-      val response = withRateLimitRetry {
-        withTimeout(60_000L) { model.generateContent(prompt) }
+      val jsonString = if (provider == "FIREBASE") {
+        val model = getTrendModel(modelName)
+        val response = withRateLimitRetry {
+          withTimeout(90_000L) { model.generateContent(prompt) }
+        }
+        response.text
+      } else {
+        generateWithCoarena(modelName, prompt, CoarenaSchemas.trend)
       }
-      val jsonString = response.text
       if (jsonString.isNullOrBlank()) {
         return@withContext TrendReportResult.Error("Trend report ka response khaali aaya. Dobara try karo.")
       }
@@ -857,6 +948,25 @@ Return JSON with: summary (one line) and gaps[] where each has topic, whyGap, su
   }
 
   /**
+   * Validates a Coarena key (or the currently configured one) against
+   * `GET /models`. Returns null when the key works, otherwise a Hinglish error.
+   */
+  suspend fun testCoarenaConnection(keyOverride: String? = null): String? = withContext(Dispatchers.IO) {
+    val key = keyOverride?.trim()?.takeIf { it.isNotBlank() } ?: resolveCoarenaKey()
+    if (key.isBlank()) {
+      return@withContext "Coarena API key missing hai. Key enter karke Save karo."
+    }
+    try {
+      val models = coarenaClient.listModels(key)
+      if (models.isEmpty()) "Coarena se koi model nahi mila. Dobara try karo." else null
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      redactKey(mapAiException(e, CoarenaClient.DEFAULT_MODEL), key)
+    }
+  }
+
+  /**
    * AUTO_EXPAND: asks Gemini for 6 micro-niche keyword variations, mixing
    * Hindi, English and Hinglish. Falls back to the hardcoded
    * [OutlierCalculator.getMicroNichesFor] list whenever the model or cache is
@@ -889,14 +999,23 @@ Return JSON with: summary (one line) and gaps[] where each has topic, whyGap, su
       }
     }
 
-    val modelName = settingsStore.geminiModel.firstOrNull()?.trim().orEmpty()
-      .ifEmpty { "gemini-3.8-flash" }
+    val provider = currentProvider()
+    val modelName = modelNameForProvider(provider)
     val prompt = buildNichePrompt(seed, normLang)
 
     try {
-      val model = getNicheModel(modelName)
-      val response = withTimeout(30_000L) { model.generateContent(prompt) }
-      val jsonString = response.text
+      val jsonString = if (provider == "FIREBASE") {
+        val model = getNicheModel(modelName)
+        val response = withTimeout(30_000L) { model.generateContent(prompt) }
+        response.text
+      } else {
+        generateWithCoarena(
+          modelName = modelName,
+          prompt = prompt,
+          schema = CoarenaSchemas.niche,
+          timeoutMs = 30_000L
+        )
+      }
       if (!jsonString.isNullOrBlank()) {
         val aiKeywords = sanitizeKeywords(parseKeywordsJson(jsonString), seed)
         // Top up with the offline list so the mode always offers 6 chips.
