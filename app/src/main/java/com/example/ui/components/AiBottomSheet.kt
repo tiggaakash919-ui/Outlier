@@ -53,6 +53,7 @@ import com.example.domain.AiAnalysis
 import com.example.domain.AiUiState
 import com.example.domain.OutlierCalculator
 import com.example.domain.OutlierVideo
+import com.example.domain.ScriptOutline
 import com.example.ui.theme.AccentRed
 import com.example.ui.theme.BadgeGreen
 import com.example.ui.theme.BadgeYellow
@@ -208,7 +209,7 @@ fun AiBottomSheet(
               )
               Spacer(modifier = Modifier.height(8.dp))
               Text(
-                text = "Settings me model naam check karo",
+                text = "AI request fail ho gaya",
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 color = AccentRed
@@ -251,6 +252,17 @@ fun AiBottomSheet(
             Spacer(modifier = Modifier.height(10.dp))
           }
 
+          if (analysis.thumbnailAnalysis.isNotBlank()) {
+            AiSectionHeader(title = "🖼️ Thumbnail Analysis", color = SecondaryCyan)
+            AiCopyableItemCard(
+              text = analysis.thumbnailAnalysis,
+              rawCopyText = analysis.thumbnailAnalysis,
+              label = "Thumbnail Analysis",
+              onCopy = ::copyText
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+          }
+
           // 1. Why Viral (3 points)
           AiSectionHeader(title = "🔥 Why It Went Viral", color = BadgeGreen)
           analysis.whyViral.forEachIndexed { idx, point ->
@@ -258,6 +270,35 @@ fun AiBottomSheet(
               text = "${idx + 1}. $point",
               rawCopyText = point,
               label = "Viral reason #${idx + 1}",
+              onCopy = ::copyText
+            )
+          }
+
+          if (analysis.targetAudience.isNotBlank()) {
+            Spacer(modifier = Modifier.height(12.dp))
+            AiSectionHeader(title = "🎯 Target Audience", color = PrimaryViolet)
+            AiCopyableItemCard(
+              text = analysis.targetAudience,
+              rawCopyText = analysis.targetAudience,
+              label = "Target Audience",
+              onCopy = ::copyText
+            )
+          }
+
+          if (analysis.replicabilityScore > 0 || analysis.replicabilityReason.isNotBlank()) {
+            Spacer(modifier = Modifier.height(12.dp))
+            AiSectionHeader(title = "📈 Replicability", color = BadgeYellow)
+            val repText = buildString {
+              if (analysis.replicabilityScore > 0) append("Score: ${analysis.replicabilityScore}/10")
+              if (analysis.replicabilityReason.isNotBlank()) {
+                if (isNotEmpty()) append(" — ")
+                append(analysis.replicabilityReason)
+              }
+            }.ifBlank { "N/A" }
+            AiCopyableItemCard(
+              text = repText,
+              rawCopyText = repText,
+              label = "Replicability",
               onCopy = ::copyText
             )
           }
@@ -290,14 +331,39 @@ fun AiBottomSheet(
 
           Spacer(modifier = Modifier.height(12.dp))
 
-          // 4. Content Idea with 3-step outline
-          AiSectionHeader(title = "🎬 Similar Short Idea & 3-Step Outline", color = PrimaryViolet)
-          AiCopyableItemCard(
-            text = analysis.contentIdea,
-            rawCopyText = analysis.contentIdea,
-            label = "Content Outline",
-            onCopy = ::copyText
-          )
+          // 4. Script Outline
+          AiSectionHeader(title = "🎬 Script Outline", color = PrimaryViolet)
+          val outline = analysis.scriptOutline
+          if (outline.hook0to3s.isNotBlank() || outline.body.isNotBlank() || outline.payoffLoop.isNotBlank()) {
+            if (outline.hook0to3s.isNotBlank()) {
+              AiCopyableItemCard("Hook (0-3s): ${outline.hook0to3s}", outline.hook0to3s, "Hook 0-3s", ::copyText)
+            }
+            if (outline.body.isNotBlank()) {
+              AiCopyableItemCard("Body: ${outline.body}", outline.body, "Body", ::copyText)
+            }
+            if (outline.payoffLoop.isNotBlank()) {
+              AiCopyableItemCard("Payoff/Loop: ${outline.payoffLoop}", outline.payoffLoop, "Payoff/Loop", ::copyText)
+            }
+          }
+          if (analysis.contentIdea.isNotBlank()) {
+            AiCopyableItemCard(
+              text = "Idea: ${analysis.contentIdea}",
+              rawCopyText = analysis.contentIdea,
+              label = "Content Idea",
+              onCopy = ::copyText
+            )
+          }
+
+          if (analysis.bestPostingTip.isNotBlank()) {
+            Spacer(modifier = Modifier.height(12.dp))
+            AiSectionHeader(title = "💡 Best Posting Tip", color = BadgeGreen)
+            AiCopyableItemCard(
+              text = analysis.bestPostingTip,
+              rawCopyText = analysis.bestPostingTip,
+              label = "Best Posting Tip",
+              onCopy = ::copyText
+            )
+          }
 
           Spacer(modifier = Modifier.height(16.dp))
 
@@ -305,15 +371,44 @@ fun AiBottomSheet(
           val fullReport = buildString {
             appendLine("Outlier Breakdown: ${video.title}")
             appendLine("Channel: ${video.channelTitle} (${OutlierCalculator.formatMultiplier(video.outlierMultiplier)}x Outlier)")
-            appendLine("\nWhy Viral:")
-            analysis.whyViral.forEach { appendLine("- $it") }
-            appendLine("\nHook Ideas:")
-            analysis.hookIdeas.forEach { appendLine("- $it") }
-            appendLine("\nTitle Ideas:")
-            analysis.titleIdeas.forEach { appendLine("- $it") }
-            appendLine("\nContent Idea & Outline:")
-            appendLine(analysis.contentIdea)
-          }
+            if (analysis.thumbnailAnalysis.isNotBlank()) {
+              appendLine("\nThumbnail Analysis:")
+              appendLine(analysis.thumbnailAnalysis)
+            }
+            if (analysis.whyViral.isNotEmpty()) {
+              appendLine("\nWhy Viral:")
+              analysis.whyViral.forEach { appendLine("- $it") }
+            }
+            if (analysis.targetAudience.isNotBlank()) {
+              appendLine("\nTarget Audience:")
+              appendLine(analysis.targetAudience)
+            }
+            if (analysis.replicabilityScore > 0 || analysis.replicabilityReason.isNotBlank()) {
+              appendLine("\nReplicability:")
+              if (analysis.replicabilityScore > 0) appendLine("Score: ${analysis.replicabilityScore}/10")
+              if (analysis.replicabilityReason.isNotBlank()) appendLine("Reason: ${analysis.replicabilityReason}")
+            }
+            if (analysis.hookIdeas.isNotEmpty()) {
+              appendLine("\nHook Ideas:")
+              analysis.hookIdeas.forEach { appendLine("- $it") }
+            }
+            if (analysis.titleIdeas.isNotEmpty()) {
+              appendLine("\nTitle Ideas:")
+              analysis.titleIdeas.forEach { appendLine("- $it") }
+            }
+            appendLine("\nScript Outline:")
+            if (outline.hook0to3s.isNotBlank()) appendLine("Hook (0-3s): ${outline.hook0to3s}")
+            if (outline.body.isNotBlank()) appendLine("Body: ${outline.body}")
+            if (outline.payoffLoop.isNotBlank()) appendLine("Payoff/Loop: ${outline.payoffLoop}")
+            if (analysis.contentIdea.isNotBlank()) {
+              appendLine("\nContent Idea:")
+              appendLine(analysis.contentIdea)
+            }
+            if (analysis.bestPostingTip.isNotBlank()) {
+              appendLine("\nBest Posting Tip:")
+              appendLine(analysis.bestPostingTip)
+            }
+          }.trim()
 
           Row(
             modifier = Modifier.fillMaxWidth(),
@@ -343,7 +438,7 @@ fun AiBottomSheet(
             ) {
               Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(15.dp))
               Spacer(modifier = Modifier.width(4.dp))
-              Text("Share", fontSize = 12.sp)
+              Text("Share as text", fontSize = 12.sp)
             }
 
             Button(

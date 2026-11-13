@@ -99,11 +99,23 @@ enum class EmptyStageReason(
   )
 }
 
+data class ScriptOutline(
+  val hook0to3s: String = "",
+  val body: String = "",
+  val payoffLoop: String = ""
+)
+
 data class AiAnalysis(
   val whyViral: List<String> = emptyList(),
   val hookIdeas: List<String> = emptyList(),
   val titleIdeas: List<String> = emptyList(),
-  val contentIdea: String = ""
+  val contentIdea: String = "",
+  val thumbnailAnalysis: String = "",
+  val targetAudience: String = "",
+  val replicabilityScore: Int = 0,
+  val replicabilityReason: String = "",
+  val scriptOutline: ScriptOutline = ScriptOutline(),
+  val bestPostingTip: String = ""
 )
 
 sealed interface AiUiState {
@@ -111,6 +123,32 @@ sealed interface AiUiState {
   data object Loading : AiUiState
   data class Success(val analysis: AiAnalysis, val isCached: Boolean) : AiUiState
   data class Error(val message: String) : AiUiState
+}
+
+data class TrendPatternSummary(
+  val titleFormulas: List<String> = emptyList(),
+  val topics: List<String> = emptyList(),
+  val hookStyles: List<String> = emptyList(),
+  val durations: List<String> = emptyList()
+)
+
+data class TrendIdea(
+  val title: String = "",
+  val hook: String = "",
+  val concept: String = "",
+  val whyItCanWork: String = ""
+)
+
+data class TrendReport(
+  val patterns: TrendPatternSummary = TrendPatternSummary(),
+  val ideas: List<TrendIdea> = emptyList()
+)
+
+sealed interface TrendReportUiState {
+  data object Idle : TrendReportUiState
+  data object Loading : TrendReportUiState
+  data class Success(val report: TrendReport, val isCached: Boolean) : TrendReportUiState
+  data class Error(val message: String) : TrendReportUiState
 }
 
 data class FilterOptions(

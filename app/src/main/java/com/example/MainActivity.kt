@@ -232,6 +232,7 @@ fun MainAppContent(
   val uiLanguage by viewModel.uiLanguage.collectAsStateWithLifecycle()
   val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
   val aiUiState by viewModel.aiUiState.collectAsStateWithLifecycle()
+  val trendReportUiState by viewModel.trendReportUiState.collectAsStateWithLifecycle()
   val selectedDetailVideo by viewModel.selectedDetailVideo.collectAsStateWithLifecycle()
   val detailSnapshots by viewModel.detailSnapshots.collectAsStateWithLifecycle()
   val detailTracked by viewModel.detailTracked.collectAsStateWithLifecycle()
@@ -385,7 +386,10 @@ fun MainAppContent(
             onCardClick = {
               detailReturnScreen = Screen.RESULTS
               viewModel.openVideoDetail(it)
-            }
+            },
+            trendReportUiState = trendReportUiState,
+            onGenerateTrendReport = { selected -> viewModel.generateTrendReport(selected) },
+            onResetTrendReport = { viewModel.resetTrendReportState() }
           )
         }
         composable(ROUTE_SAVED) {

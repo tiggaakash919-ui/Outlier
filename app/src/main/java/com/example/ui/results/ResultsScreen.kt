@@ -85,6 +85,7 @@ import coil.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material3.Checkbox
 import com.example.domain.DebugStats
 import com.example.domain.DiscoveryMode
 import com.example.domain.EmptyStageReason
@@ -94,8 +95,10 @@ import com.example.domain.OutlierVideo
 import com.example.domain.QuotaStatus
 import com.example.domain.ShortStatus
 import com.example.domain.SortOption
+import com.example.domain.TrendReportUiState
 import com.example.ui.components.DebugCard
 import com.example.ui.components.OutlierCard
+import com.example.ui.components.TrendReportSheet
 import com.example.ui.theme.AccentRed
 import com.example.ui.theme.BadgeYellow
 import com.example.ui.theme.LocalAppStrings
@@ -125,6 +128,9 @@ fun ResultsScreen(
   similarSeedTitle: String = "",
   onFindSimilar: ((OutlierVideo) -> Unit)? = null,
   onCardClick: (OutlierVideo) -> Unit = {},
+  trendReportUiState: TrendReportUiState = TrendReportUiState.Idle,
+  onGenerateTrendReport: (List<OutlierVideo>) -> Unit = {},
+  onResetTrendReport: () -> Unit = {},
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
@@ -137,6 +143,8 @@ fun ResultsScreen(
   var showNonShorts by remember { mutableStateOf(false) }
   var showDisclaimer by remember { mutableStateOf(true) }
   var showTryMoreDialog by remember { mutableStateOf(false) }
+  var trendSelectionMode by remember { mutableStateOf(false) }
+  var selectedTrendIds by remember { mutableStateOf<Set<String>>(emptySet()) }
 
   // Filtered and sorted list
   val displayList by remember(outliers, selectedSort, showNonShorts) {
@@ -466,21 +474,141 @@ fun ResultsScreen(
         }
       }
 
+      if (displayList.isNotEmpty() && !isLoading) {
+        item {
+          Card(
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+              ) {
+                Column(modifier = Modifier.weight(1f)) {
+                  Text("Trend Report (Gemini)", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                  Text(
+                    if (trendSelectionMode) {
+                      "Select 5-20 outliers • selected: ${selectedTrendIds.size}"
+                    } else {
+                      "5-20 outliers select karke common patterns + 5 ideas pao"
+                    },
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                  )
+                }
+                if (!trendSelectionMode) {
+                  OutlinedButton(onClick = {
+                    trendSelectionMode = true
+                    selectedTrendIds = emptySet()
+                  }) {
+                    Icon(Icons.Default.AutoFixHigh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Select")
+                  }
+                } else {
+                  OutlinedButton(onClick = {
+                    trendSelectionMode = false
+                    selectedTrendIds = emptySet()
+                  }) {
+                    Text("Cancel")
+                  }
+                }
+              }
+
+              if (trendSelectionMode) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                  Button(
+                    onClick = {
+                      val selected = displayList.filter { selectedTrendIds.contains(it.videoId) }
+                      if (selected.size in 5..20) {
+                        onGenerateTrendReport(selected)
+                      } else {
+                        coroutineScope.launch {
+                          snackbarHostState.showSnackbar("Trend report ke liye 5 se 20 outliers select karo")
+                        }
+                      }
+                    },
+                    enabled = selectedTrendIds.size in 5..20 && trendReportUiState !is TrendReportUiState.Loading,
+                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryViolet)
+                  ) {
+                    Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Generate Trend Report", color = Color.White)
+                  }
+                  OutlinedButton(onClick = {
+                    selectedTrendIds = displayList.take(20).map { it.videoId }.toSet()
+                  }) {
+                    Text("Pick 20")
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
       // List of Outlier Cards with animated placement
       items(
         items = displayList,
         key = { it.videoId }
       ) { video ->
-        OutlierCard(
-          video = video,
-          onOpenClick = { openShort(it) },
-          onSaveToggle = onSaveToggle,
-          onCopyClick = { label, content -> copyToClipboard(label, content) },
-          onAiClick = onAiClick,
-          onFindSimilar = onFindSimilar,
-          onCardClick = onCardClick,
-          modifier = Modifier.animateItem()
-        )
+        val isSelected = selectedTrendIds.contains(video.videoId)
+        if (trendSelectionMode) {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clickable {
+                selectedTrendIds = if (isSelected) {
+                  selectedTrendIds - video.videoId
+                } else if (selectedTrendIds.size < 20) {
+                  selectedTrendIds + video.videoId
+                } else {
+                  selectedTrendIds
+                }
+                if (!isSelected && selectedTrendIds.size >= 20) {
+                  coroutineScope.launch { snackbarHostState.showSnackbar("Max 20 outliers select kar sakte ho") }
+                }
+              },
+            verticalAlignment = Alignment.Top
+          ) {
+            Checkbox(
+              checked = isSelected,
+              onCheckedChange = { checked ->
+                selectedTrendIds = if (checked) {
+                  if (selectedTrendIds.size < 20) selectedTrendIds + video.videoId else selectedTrendIds
+                } else {
+                  selectedTrendIds - video.videoId
+                }
+              },
+              modifier = Modifier.padding(top = 8.dp)
+            )
+            OutlierCard(
+              video = video,
+              onOpenClick = { openShort(it) },
+              onSaveToggle = onSaveToggle,
+              onCopyClick = { label, content -> copyToClipboard(label, content) },
+              onAiClick = onAiClick,
+              onFindSimilar = onFindSimilar,
+              onCardClick = { /* selection mode: toggle handled by row */ },
+              modifier = Modifier.weight(1f).animateItem()
+            )
+          }
+        } else {
+          OutlierCard(
+            video = video,
+            onOpenClick = { openShort(it) },
+            onSaveToggle = onSaveToggle,
+            onCopyClick = { label, content -> copyToClipboard(label, content) },
+            onAiClick = onAiClick,
+            onFindSimilar = onFindSimilar,
+            onCardClick = onCardClick,
+            modifier = Modifier.animateItem()
+          )
+        }
       }
 
       // Near misses section when final results < 5 (Requirement 5)
@@ -593,6 +721,23 @@ fun ResultsScreen(
       hostState = snackbarHostState,
       modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp)
     )
+
+    if (trendReportUiState !is TrendReportUiState.Idle) {
+      val selectedVideosForReport = displayList.filter { selectedTrendIds.contains(it.videoId) }
+      TrendReportSheet(
+        uiState = trendReportUiState,
+        selectedCount = selectedVideosForReport.size,
+        onRegenerate = {
+          if (selectedVideosForReport.size in 5..20) {
+            onGenerateTrendReport(selectedVideosForReport)
+          }
+        },
+        onDismiss = {
+          onResetTrendReport()
+          trendSelectionMode = false
+        }
+      )
+    }
 
     // "Try more" Confirmation & Options Dialog
     if (showTryMoreDialog) {

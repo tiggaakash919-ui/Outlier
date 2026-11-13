@@ -13,6 +13,7 @@ import com.example.data.repository.OutlierRepository
 import com.example.data.repository.QuotaTracker
 import com.example.data.repository.SavedRepository
 import com.example.data.repository.SearchResult
+import com.example.data.repository.TrendReportResult
 import com.example.data.repository.VelocityRepository
 import com.example.domain.AiUiState
 import com.example.domain.ApiKeyUi
@@ -29,6 +30,7 @@ import com.example.domain.OutlierVideo
 import com.example.domain.PresetType
 import com.example.domain.Presets
 import com.example.domain.QuotaStatus
+import com.example.domain.TrendReportUiState
 import com.example.domain.VelocityState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -164,6 +166,9 @@ class MainViewModel(
 
   private val _aiUiState = MutableStateFlow<AiUiState>(AiUiState.Idle)
   val aiUiState: StateFlow<AiUiState> = _aiUiState.asStateFlow()
+
+  private val _trendReportUiState = MutableStateFlow<TrendReportUiState>(TrendReportUiState.Idle)
+  val trendReportUiState: StateFlow<TrendReportUiState> = _trendReportUiState.asStateFlow()
 
   private val _userMessages = MutableSharedFlow<String>()
   val userMessages: SharedFlow<String> = _userMessages.asSharedFlow()
@@ -543,6 +548,26 @@ class MainViewModel(
 
   fun resetAiState() {
     _aiUiState.value = AiUiState.Idle
+  }
+
+  fun generateTrendReport(videos: List<OutlierVideo>, forceRefresh: Boolean = false) {
+    if (videos.size < 5 || videos.size > 20) {
+      _trendReportUiState.value = TrendReportUiState.Error("Trend report ke liye 5 se 20 outliers select karo.")
+      return
+    }
+    _trendReportUiState.value = TrendReportUiState.Loading
+    viewModelScope.launch {
+      when (val res = aiRepository.generateTrendReport(videos, aiLanguage.value, forceRefresh)) {
+        is TrendReportResult.Success ->
+          _trendReportUiState.value = TrendReportUiState.Success(res.report, res.isCached)
+        is TrendReportResult.Error ->
+          _trendReportUiState.value = TrendReportUiState.Error(res.message)
+      }
+    }
+  }
+
+  fun resetTrendReportState() {
+    _trendReportUiState.value = TrendReportUiState.Idle
   }
 
   fun setGeminiModel(model: String) {

@@ -398,9 +398,15 @@ fun SettingsScreen(
         Text("AI Response Language:", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(modifier = Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          listOf("Hinglish", "Hindi", "English").forEach { lang ->
+          listOf("Hinglish", "Hindi (Devanagari)", "English").forEach { lang ->
+            val selected = when (lang) {
+              "Hindi (Devanagari)" -> aiLanguage.equals("Hindi", true) ||
+                aiLanguage.equals("Hindi (Devanagari)", true) ||
+                aiLanguage.equals("Devanagari", true)
+              else -> aiLanguage.equals(lang, ignoreCase = true)
+            }
             FilterChip(
-              selected = aiLanguage.equals(lang, ignoreCase = true),
+              selected = selected,
               onClick = { onAiLanguageChange(lang) },
               label = { Text(lang, fontSize = 12.sp) }
             )
